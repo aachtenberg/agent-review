@@ -23,7 +23,8 @@ Then investigate. Don't review the diff in isolation:
 - Use `git-ro log -p` or `git-ro blame` on a changed line when its history explains it.
 
 Report only problems you have verified by reading the code. No style,
-formatting or naming preferences.
+formatting or naming preferences. A problem you found by reading the code counts even
+when no test exercises it: report it, don't reason it away.
 
 ## Output
 
