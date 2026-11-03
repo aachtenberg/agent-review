@@ -1,0 +1,68 @@
+#!/bin/bash
+# git-ro: the reviewer's only shell command (see opencode.json).
+#
+# OpenCode's bash permissions are globs over the raw command string, but the
+# shell dequotes and word-splits before git sees its arguments, so a deny glob
+# can't reliably keep git inside the checkout ($'/etc/x', tabs, quoted flags).
+# This checks the arguments git actually receives:
+#   - subcommand: diff, log, show, blame or merge-base
+#   - options: a fixed allowlist (no --output, --no-index, external tools)
+#   - every other argument, taken as a path, must resolve under /work
+# then execs git with a clean environment, so git sees no secret either.
+# Rejections never echo the argument, which could carry substituted content.
+set -euo pipefail
+root=/work
+die() { echo "git-ro: $*" >&2; exit 2; }
+
+[ $# -ge 1 ] || die "usage: git-ro diff|log|show|blame|merge-base [options] [revs] [-- paths]"
+sub=$1; shift
+case "$sub" in diff|log|show|blame|merge-base) ;; *) die "subcommand not allowed (use diff, log, show, blame, merge-base)" ;; esac
+
+opt_ok() {
+  case "$1" in
+    -p|--patch|-s|--no-patch|--stat|--stat=*|--shortstat|--numstat|--name-only|--name-status|\
+    -U[0-9]*|--unified=[0-9]*|-W|--function-context|-w|--ignore-all-space|-b|--ignore-space-change|\
+    --word-diff|--word-diff=plain|--color=never|--no-color|--oneline|--graph|--decorate|--no-decorate|\
+    --format=*|--pretty=*|--abbrev-commit|--follow|--reverse|--merges|--no-merges|--first-parent|\
+    --all|--since=*|--until=*|--after=*|--before=*|--author=*|--grep=*|-i|--regexp-ignore-case|\
+    -n[0-9]*|--max-count=[0-9]*|--skip=[0-9]*|-[0-9]|-[0-9][0-9]|-[0-9][0-9][0-9]|\
+    -G*|-S*|--pickaxe-all|-M|-C|--find-renames|--diff-filter=*|--minimal|--histogram|\
+    -e|-c|--cc|-m|--date=*|--is-ancestor|--fork-point|--octopus) return 0 ;;
+  esac
+  return 1
+}
+
+args=() paths_only=0 want_val=0
+for a in "$@"; do
+  if [ "$want_val" = 1 ]; then
+    # Value of -L / -n given as a separate word: line ranges or a count.
+    case "$a" in *[!0-9,+:^-]*) die "bad option value" ;; esac
+    args+=("$a"); want_val=0; continue
+  fi
+  if [ "$paths_only" = 0 ]; then
+    case "$a" in
+      --) args+=("$a"); paths_only=1; continue ;;
+      -L|-n) args+=("$a"); want_val=1; continue ;;
+      -L[0-9]*) case "${a#-L}" in *[!0-9,+-]*) die "bad -L range" ;; esac; args+=("$a"); continue ;;
+      -*) opt_ok "$a" || die "option not allowed"; args+=("$a"); continue ;;
+    esac
+  fi
+  # A revision (abc...def, main, HEAD~2) resolves under /work like a relative
+  # path, so the same check covers both. rev:path reads from git objects.
+  resolved=$(realpath -m -- "$root/$a") || die "bad argument"
+  case "$a" in /*|~*) die "absolute paths not allowed" ;; esac
+  case "$resolved" in "$root"|"$root"/*) ;; *) die "path outside the repository" ;; esac
+  args+=("$a")
+done
+[ "$want_val" = 0 ] || die "option is missing its value"
+
+case "$sub" in
+  diff|log|show) safety=(--no-ext-diff --no-textconv) ;;
+  blame) safety=(--no-textconv) ;;
+  *) safety=() ;;
+esac
+
+cd "$root"
+exec env -i PATH=/usr/bin:/bin HOME="${HOME:-/root}" LANG=C.UTF-8 \
+  git --no-pager -c core.pager=cat -c safe.directory="$root" \
+  "$sub" "${safety[@]}" "${args[@]}"

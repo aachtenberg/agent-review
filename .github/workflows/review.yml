@@ -1,0 +1,256 @@
+name: Agent Review (reusable)
+# An agentic PR review: OpenCode (MIT, github.com/anomalyco/opencode) works on
+# a full checkout of the PR. It runs git diff/log/show, reads files, greps for
+# callers, and follows the change through the repo before writing a short
+# review, posted as a PR comment.
+#
+# Called from a small workflow in each repo (see examples/agent-review.yml).
+# The prompt, the OpenCode config, the git wrapper and the renderer are read
+# from this repo at `config_ref`, never from the repo under review, so a PR
+# cannot change how it is reviewed.
+#
+# Model: any OpenCode provider/model. The default is GLM 5.3 Flash via
+# OpenRouter (needs the OPENROUTER_API_KEY secret). With `fallback_model`
+# set, a failed first attempt (or a missing key) is retried once with it,
+# e.g. a local Ollama model on a self-hosted runner. The comment's footer
+# names the model that wrote the review.
+#
+# Isolation: the PR's code is untrusted input to an agent that runs commands.
+#   - Same-repo PRs only (fork PRs never run), /review only from the owner.
+#   - The agent runs in a throwaway container; the PR checkout is mounted
+#     read-only; OPENCODE_DISABLE_PROJECT_CONFIG ignores any opencode.json or
+#     AGENTS.md the PR adds.
+#   - OpenCode permissions deny everything except read/grep/glob/list inside
+#     the checkout and one shell command, git-ro (review/git-ro). OpenCode's
+#     bash rules are globs over the raw command string, which shell quoting
+#     gets past, so the boundary is the wrapper: it sees the argv git gets,
+#     allows diff|log|show|blame|merge-base with a fixed option list (no
+#     --output, --no-index, external diff/textconv), requires every path to
+#     resolve inside the checkout, and execs git with an empty environment.
+#     The bash rules also refuse $ ` < > (no substitution, no redirects).
+#   - Symlinks in the PR that resolve outside the checkout are replaced with
+#     a placeholder before it is mounted (OpenCode's read tool follows them).
+#   - OPENROUTER_API_KEY goes into the container only for an openrouter/
+#     model. GITHUB_TOKEN never does; checkouts use persist-credentials:
+#     false, and the comment is posted after the container has exited.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: runs-on label. Public repos use GitHub-hosted; private repos our self-hosted runner.
+        type: string
+        default: ubuntu-latest
+      model:
+        description: OpenCode provider/model for the review.
+        type: string
+        default: openrouter/z-ai/glm-5.3-flash
+      fallback_model:
+        description: Model to retry with once if the first attempt fails or has no key. Empty for none.
+        type: string
+        default: ""
+      ollama_base_url:
+        description: OpenAI-compatible Ollama endpoint for ollama/ models, e.g. http://host:11434/v1.
+        type: string
+        default: ""
+      config_ref:
+        description: Ref of aachtenberg/agent-review to read the prompt and config from. Keep it equal to the ref in `uses:`.
+        type: string
+        default: v1
+    secrets:
+      OPENROUTER_API_KEY:
+        required: false
+
+env:
+  OPENCODE_VERSION: 1.19.3
+  # node:22-bookworm-slim, pinned by digest; bump both together.
+  AGENT_IMAGE: node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+  MODEL: ${{ inputs.model }}
+  FALLBACK_MODEL: ${{ inputs.fallback_model }}
+  OLLAMA_BASE_URL: ${{ inputs.ollama_base_url }}
+
+jobs:
+  agent-review:
+    # The caller applies the same guard; repeated here so a careless caller
+    # cannot open the reviewer to forks or other commenters.
+    if: >-
+      (github.event_name == 'pull_request_target'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.author_association == 'OWNER'
+        && startsWith(github.event.comment.body, '/review'))
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    # Two attempts of at most 15 minutes each, plus setup.
+    timeout-minutes: 40
+    steps:
+      - name: Resolve the PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+          python3 - "$RUNNER_TEMP/pr.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os, sys
+          pr = json.load(open(sys.argv[1]))
+          # issue_comment carries no head repo; enforce the fork guard here.
+          if pr["head"]["repo"] is None or pr["head"]["repo"]["full_name"] != os.environ["GITHUB_REPOSITORY"]:
+              sys.exit("refusing: PR head is not in this repository")
+          print(f"number={pr['number']}")
+          print(f"head_sha={pr['head']['sha']}")
+          print(f"base_sha={pr['base']['sha']}")
+          print(f"base_ref={pr['base']['ref']}")
+          PY
+          if [ "${GITHUB_EVENT_NAME}" = issue_comment ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes >/dev/null || true
+          fi
+
+      - name: Check out the reviewer (aachtenberg/agent-review)
+        uses: actions/checkout@v4
+        with:
+          repository: aachtenberg/agent-review
+          ref: ${{ inputs.config_ref }}
+          path: reviewer
+          persist-credentials: false
+          sparse-checkout: review
+          sparse-checkout-cone-mode: false
+
+      - name: Check out the PR
+        uses: actions/checkout@v4
+        with:
+          path: pr
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Neutralize symlinks that leave the checkout
+        run: |
+          set -euo pipefail
+          root=$(realpath pr)
+          find pr -type l -print0 | while IFS= read -r -d '' l; do
+            target=$(readlink -- "$l"); resolved=$(realpath -m -- "$l")
+            case "$resolved" in "$root"|"$root"/*) ;; *)
+              rm -- "$l"
+              printf '[agent-review: symlink to %s removed, it points outside the repository]\n' "$target" > "$l"
+              echo "neutralized: ${l#pr/} -> $target" ;;
+            esac
+          done
+
+      - name: Review
+        env:
+          # Handed to the container only for an openrouter/ model (below).
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          cfg="$GITHUB_WORKSPACE/reviewer/review"
+          # fetch-depth: 0 brought every branch, so BASE_SHA is present for
+          # `git-ro diff BASE...HEAD` inside the container.
+          git -C pr cat-file -e "$BASE_SHA^{commit}"
+          # Repo-specific review notes, read from the BASE commit so the PR
+          # under review cannot rewrite its own instructions. Optional.
+          git -C pr show "$BASE_SHA:.github/agent-review.md" > "$RUNNER_TEMP/notes.md" 2>/dev/null || : > "$RUNNER_TEMP/notes.md"
+          # Plain string replacement: a ref may contain / & or \, which a sed
+          # replacement would misread.
+          prompt="$(python3 -I -c 'import os,sys
+          t = open(sys.argv[1]).read()
+          for k in ("BASE_SHA", "HEAD_SHA", "BASE_REF", "PR_NUMBER"):
+              t = t.replace("{{" + k + "}}", os.environ[k])
+          notes = open(sys.argv[2]).read().strip()[:4000]
+          if notes:
+              t += "\n## Notes for this repository (from .github/agent-review.md)\n\n" + notes + "\n"
+          sys.stdout.write(t)' "$cfg/prompt.md" "$RUNNER_TEMP/notes.md")"
+          # run_agent MODEL: one attempt; events to events.jsonl, stderr
+          # appended to agent.log. The key goes in only for openrouter/.
+          run_agent() {
+            local key_env=()
+            case "$1" in openrouter/*) key_env=(-e OPENROUTER_API_KEY) ;; esac
+            echo "=== $1" >> "$RUNNER_TEMP/agent.log"
+            docker run --rm --pull=missing --memory=4g --cpus=2 \
+              -v "$GITHUB_WORKSPACE/pr:/work:ro" \
+              -v "$cfg/opencode.json:/cfg/opencode.json:ro" \
+              -v "$cfg/git-ro:/usr/local/bin/git-ro:ro" \
+              -w /work \
+              -e OPENCODE_CONFIG=/cfg/opencode.json \
+              -e OPENCODE_DISABLE_PROJECT_CONFIG=1 \
+              -e OPENCODE_DISABLE_AUTOUPDATE=1 \
+              -e OLLAMA_BASE_URL \
+              "${key_env[@]}" \
+              -e MODEL="$1" -e PROMPT="$prompt" -e OPENCODE_VERSION \
+              "$AGENT_IMAGE" bash -c '
+                set -e
+                apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+                git config --global --add safe.directory /work
+                npm install -g --silent "opencode-ai@${OPENCODE_VERSION}" >/dev/null 2>&1
+                timeout 900 opencode run --model "$MODEL" --format json "$PROMPT"
+              ' > "$RUNNER_TEMP/events.jsonl" 2>> "$RUNNER_TEMP/agent.log"
+          }
+          start=$(date +%s)
+          used=$MODEL fell_back="" note="" rc=0
+          if [[ $MODEL == openrouter/* && -z ${OPENROUTER_API_KEY:-} ]]; then
+            fell_back="no OPENROUTER_API_KEY in this repo" rc=1
+          else
+            run_agent "$MODEL" || rc=$?
+            [ "$rc" = 0 ] || fell_back="$MODEL exited $rc"
+          fi
+          if [ -n "$fell_back" ] && [ -n "${FALLBACK_MODEL:-}" ] && [ "$FALLBACK_MODEL" != "$MODEL" ]; then
+            echo "::warning::agent-review falling back to $FALLBACK_MODEL: $fell_back"
+            [ ! -s "$RUNNER_TEMP/events.jsonl" ] || mv "$RUNNER_TEMP/events.jsonl" "$RUNNER_TEMP/events-primary.jsonl"
+            used=$FALLBACK_MODEL rc=0
+            run_agent "$FALLBACK_MODEL" || rc=$?
+          elif [ -n "$fell_back" ]; then
+            # No fallback configured: report why the review did not run.
+            note=$fell_back fell_back=""
+          fi
+          echo "agent exited $rc" >> "$RUNNER_TEMP/agent.log"
+          # The post step reports a failed agent and then fails the job.
+          {
+            echo "AGENT_RC=$rc"
+            echo "AGENT_NOTE=$note"
+            echo "MODEL_USED=$used"
+            echo "FELL_BACK=$fell_back"
+            echo "ELAPSED=$(( $(date +%s) - start ))"
+          } >> "$GITHUB_ENV"
+          tail -30 "$RUNNER_TEMP/agent.log" || true
+
+      - name: Post the review
+        # Not when cancelled: a run superseded by a newer /review posts nothing.
+        if: ${{ !cancelled() && steps.pr.outputs.number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -I reviewer/review/render.py "$RUNNER_TEMP/events.jsonl" > "$RUNNER_TEMP/comment.md"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@"$RUNNER_TEMP/comment.md" --jq .html_url
+          # AGENT_RC is unset when the Review step failed before the agent ran.
+          if [ "${AGENT_RC:-}" != 0 ]; then
+            echo "::error::the agent did not finish (exit ${AGENT_RC:-not run}); a failure comment was posted"
+            exit 1
+          fi
+
+      # Finish signal on a /review comment, next to the 👀 added at start:
+      # 🚀 when the review was posted, 👎 when the run failed. A run cancelled
+      # by a newer /review gets neither; the newer run reacts on its comment.
+      - name: React to the /review comment
+        if: (success() || failure()) && github.event_name == 'issue_comment' && steps.pr.outputs.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = success ]; then reaction=rocket; else reaction=-1; fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content="$reaction" >/dev/null || true

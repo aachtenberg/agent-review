@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "{env:OLLAMA_BASE_URL}"
+      },
+      "models": {
+        "gpt-oss:20b": {
+          "name": "gpt-oss 20b",
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        },
+        "hf.co/unsloth/Qwen3.5-35B-A3B-GGUF:UD-IQ4_XS": {
+          "name": "Qwen3.5 35B-A3B",
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+  "permission": {
+    "*": "deny",
+    "read": "allow",
+    "grep": "allow",
+    "glob": "allow",
+    "list": "allow",
+    "todowrite": "allow",
+    "external_directory": "deny",
+    "edit": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "bash": {
+      "*": "deny",
+      "git-ro *": "allow",
+      "*$*": "deny",
+      "*`*": "deny",
+      "*<*": "deny",
+      "*>*": "deny"
+    }
+  }
+}

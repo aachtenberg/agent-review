@@ -1,0 +1,41 @@
+# Copy to .github/workflows/agent-review.yml in a repo to get agentic PR
+# reviews from aachtenberg/agent-review. Pick the `with:` block that matches
+# the repo's visibility and delete the other.
+name: Agent Review
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Same-repo PRs only, and /review only from the repo owner.
+    if: >-
+      (github.event_name == 'pull_request_target'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.author_association == 'OWNER'
+        && startsWith(github.event.comment.body, '/review'))
+    uses: aachtenberg/agent-review/.github/workflows/review.yml@v1
+    # Public repo: GitHub-hosted runner, GLM 5.3 Flash via OpenRouter.
+    with:
+      runner: ubuntu-latest
+    # Private repo: our self-hosted runner, with the local Ollama as fallback.
+    # with:
+    #   runner: ubuntu-itx-01
+    #   fallback_model: ollama/gpt-oss:20b
+    #   ollama_base_url: http://<ollama-host>:11434/v1
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
