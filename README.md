@@ -42,14 +42,14 @@ The model is any [OpenCode provider/model](https://opencode.ai/docs/models/). Th
 
 Secret: `OPENROUTER_API_KEY`, optional, needed for `openrouter/` models.
 
-Bundled `ollama/` models: `gpt-oss:20b` and `hf.co/unsloth/Qwen3.5-35B-A3B-GGUF:UD-IQ4_XS`. To use another, add it under `provider.ollama.models` in [`review/opencode.json`](review/opencode.json).
+Bundled `ollama/` models: `gemma4:26b`, `gpt-oss:20b` and `hf.co/unsloth/Qwen3.5-35B-A3B-GGUF:UD-IQ4_XS`. As a fallback, prefer a model your Ollama host keeps loaded anyway: a fallback that has to evict another model to load waits for the GPU. In testing, the local models caught simple breaks (a Service selector no pod matches) but not subtler ones, so use one as a fallback rather than the main model. To use another, add it under `provider.ollama.models` in [`review/opencode.json`](review/opencode.json).
 
 ## The comment
 
 | Heading | Meaning |
 |---|---|
 | **🔎 Agent review** | The review: a count line, then numbered findings, most severe first (at most 5), each with **Breaks**, optionally **Affected**, and **Fix**. Or ✅ `No issues found.` |
-| **🔎 Agent review** with a folded *"Agent's last message (not a review)"* | The agent finished without writing its review block. Its last message is folded away rather than posted; comment `/review` to retry. |
+| **⚠️ No review** | The agent finished without writing its review block, or without writing anything. Any last message is folded away rather than posted, and the job fails; comment `/review` to retry. |
 | **⚠️ Agent review failed** | The agent exited with an error, hit its time limit, or couldn't run (for example, no key and no fallback). Any partial output is folded away, and the job fails. |
 
 The model writes the structure; `render.py` adds the presentation, so it looks the same whichever model wrote it: the severity icons (🔴 high, 🟠 medium, 🟡 low), the count line, and links from each `path:line` to that line at the PR's head commit.

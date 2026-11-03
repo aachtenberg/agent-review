@@ -240,6 +240,12 @@ jobs:
             echo "::error::the agent did not finish (exit ${AGENT_RC:-not run}); a failure comment was posted"
             exit 1
           fi
+          # render.py heads every no-review comment with ⚠️ (failed, or
+          # finished without a review block): that is a failed run too.
+          if head -n1 "$RUNNER_TEMP/comment.md" | grep -q '⚠️'; then
+            echo "::error::the agent finished without a review; a comment saying so was posted"
+            exit 1
+          fi
 
       # Finish signal on a /review comment, next to the 👀 added at start:
       # 🚀 when the review was posted, 👎 when the run failed. A run cancelled
