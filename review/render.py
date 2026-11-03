@@ -2,8 +2,8 @@
 """Turn `opencode run --format json` events into the PR comment body.
 
 The review is the text between <<<REVIEW and REVIEW>>> in the agent's output.
-A closing marker the model mangled (a bare `REVIEW` line, or none) still
-counts: the block then runs to that line or to the end. With no opening
+Markers count only on a line of their own. A closing marker the model
+mangled (a bare `REVIEW` line, or none) still counts: the block then runs to that line or to the end. With no opening
 marker, the last text part is folded into <details> under a note, since it is
 usually the model thinking aloud rather than a review. The footer reports
 the model, commit, tool calls, tokens/cost (when the provider reports them)
@@ -56,13 +56,16 @@ failed = agent_rc != "0"
 marked = False
 
 full = "\n".join(texts)
-start = full.rfind("<<<REVIEW")
-if start != -1:
+# Markers count only on a line of their own: a review can mention them in its
+# text (a "Checked:" line about this very parser did), and an inline mention
+# must not be taken for the start or end of the block.
+opens = list(re.finditer(r"^[ \t]*<<<REVIEW[ \t]*$", full, re.M))
+if opens:
     marked = True
-    review = full[start + len("<<<REVIEW"):]
-    # Stop at REVIEW>>>, else at a bare REVIEW line, else run to the end
-    # minus a trailing ``` the model wrapped the block in.
-    for end in (r"\n[ \t]*REVIEW>>>", r"\n[ \t]*REVIEW[ \t]*$"):
+    review = full[opens[-1].end():]
+    # Stop at a REVIEW>>> line, else at a bare REVIEW line, else run to the
+    # end minus a trailing ``` the model wrapped the block in.
+    for end in (r"^[ \t]*REVIEW>>>[ \t]*$", r"^[ \t]*REVIEW[ \t]*$"):
         parts = re.split(end, review, maxsplit=1, flags=re.M)
         if len(parts) == 2:
             review = parts[0]
