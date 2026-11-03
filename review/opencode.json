@@ -21,6 +21,13 @@
             "context": 65536,
             "output": 16384
           }
+        },
+        "gemma4:26b": {
+          "name": "Gemma 4 26B",
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
         }
       }
     }

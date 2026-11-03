@@ -10,8 +10,10 @@ the model, commit, tool calls, tokens/cost (when the provider reports them)
 and duration, so reviews from different models can be compared.
 
 AGENT_RC is the agent's exit code. When it is not 0 (or unset: the agent
-never ran), the comment says the review failed, and any partial output is
-folded away, so half-finished reasoning is never posted as a review.
+never ran), the comment says the review failed. When it is 0 but there is no
+review block, the comment says there is no review. Either way any output is
+folded away, so half-finished reasoning is never posted as a review, and the
+heading starts with ⚠️, which the workflow treats as a failed run.
 """
 import json
 import os
@@ -123,8 +125,7 @@ elif texts:
     # No marked block: what's there is usually the model thinking aloud.
     review = texts[-1].strip()
 else:
-    review = ("_The agent produced no review._ See the workflow run log for "
-              "the agent's stderr.")
+    review = ""
 
 if len(review) > MAX:
     review = review[:MAX] + "\n\n_(truncated)_"
@@ -159,17 +160,22 @@ if failed:
         print("\n<details><summary>Partial agent output (not a review)</summary>\n")
         print(partial)
         print("\n</details>")
-else:
-    print("### 🔎 Agent review\n")
-    if texts and not marked:
-        # Never post unstructured output as the review: fold it away.
-        print("_The agent finished without a structured review. Comment "
-              "`/review` to retry._\n")
-        print("<details><summary>Agent's last message (not a review)</summary>\n")
+elif not marked:
+    # The agent exited cleanly but wrote no review block: either nothing at
+    # all, or unstructured text (usually thinking aloud). Never post that as
+    # the review. The heading starts with ⚠️, which the workflow's post step
+    # treats as a failed run (👎 on /review).
+    print("### ⚠️ No review\n")
+    what = "without writing a review" if texts else "without writing anything"
+    print(f"The agent finished {what}. The [run log]({run_url}) has the "
+          "details. Comment `/review` to retry.")
+    if texts:
+        print("\n<details><summary>Agent's last message (not a review)</summary>\n")
         print(review)
         print("\n</details>")
-    else:
-        print(decorate(review))
+else:
+    print("### 🔎 Agent review\n")
+    print(decorate(review))
 print("\n---")
 print(f"<sub>OpenCode · `{model}`{' (fallback: ' + fell_back + ')' if fell_back else ''} · `{sha}` · {len(tools)} tool calls ({tool_summary}) · "
       f"{usage} · {elapsed}s · [run]({run_url}) · "
