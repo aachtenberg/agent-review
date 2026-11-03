@@ -59,13 +59,14 @@ full = "\n".join(texts)
 # Markers count only on a line of their own: a review can mention them in its
 # text (a "Checked:" line about this very parser did), and an inline mention
 # must not be taken for the start or end of the block.
-opens = list(re.finditer(r"^[ \t]*<<<REVIEW[ \t]*$", full, re.M))
+opens = list(re.finditer(r"^[ \t]*<<<REVIEW[ \t]*\r?$", full, re.M))
 if opens:
     marked = True
     review = full[opens[-1].end():]
-    # Stop at a REVIEW>>> line, else at a bare REVIEW line, else run to the
-    # end minus a trailing ``` the model wrapped the block in.
-    for end in (r"^[ \t]*REVIEW>>>[ \t]*$", r"^[ \t]*REVIEW[ \t]*$"):
+    # Stop at a line starting with REVIEW>>> (anything after it on that line
+    # is dropped), else at a bare REVIEW line, else run to the end minus a
+    # trailing ``` the model wrapped the block in.
+    for end in (r"^[ \t]*REVIEW>>>", r"^[ \t]*REVIEW[ \t]*\r?$"):
         parts = re.split(end, review, maxsplit=1, flags=re.M)
         if len(parts) == 2:
             review = parts[0]
