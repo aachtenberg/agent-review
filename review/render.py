@@ -17,8 +17,51 @@ import json
 import os
 import re
 import sys
+from urllib.parse import quote
 
 MAX = 60000  # GitHub caps a comment body at 65536 characters
+
+SEVERITY = {"high": "🔴 **High**", "medium": "🟠 **Medium**", "low": "🟡 **Low**"}
+FINDING = re.compile(r"^(\s*(?:\d+\.|[-*])\s+)(?:\*\*)?\[(high|medium|low)\](?:\*\*)?\s*", re.I)
+LOCATION = re.compile(r"`([^`\s:]+):(\d+)(?:-(\d+))?`")
+
+
+def decorate(review):
+    """Severity icons, file:line links to the PR head, and a count line.
+
+    Only presentation: the model writes the structure (prompt.md), this makes
+    it look the same on every run. Lines that are not findings are untouched.
+    """
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    head = os.environ.get("HEAD_SHA", "")
+    counts = {"high": 0, "medium": 0, "low": 0}
+    out = []
+    for line in review.split("\n"):
+        m = FINDING.match(line)
+        if m:
+            sev = m.group(2).lower()
+            counts[sev] += 1
+            rest = line[m.end():]
+            if repo and head:
+                def link(loc):
+                    path, a, b = loc.group(1), loc.group(2), loc.group(3)
+                    if path.startswith("/") or ".." in path.split("/"):
+                        return loc.group(0)
+                    anchor = f"#L{a}-L{b}" if b else f"#L{a}"
+                    return f"[{loc.group(0)}](https://github.com/{repo}/blob/{head}/{quote(path)}{anchor})"
+                rest = LOCATION.sub(link, rest, count=1)
+            line = f"{m.group(1)}{SEVERITY[sev]} · {rest}"
+        out.append(line)
+    n = sum(counts.values())
+    body = "\n".join(out)
+    if n:
+        parts = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+        return f"**{n} finding{'s' if n != 1 else ''}**: {parts}\n\n{body}"
+    if body.startswith("No issues found"):
+        # Keep "Checked:" on its own line; Markdown joins adjacent lines.
+        return "✅ " + body.replace("\n", "\n\n", 1)
+    return body
+
 
 events = []
 try:
@@ -56,17 +99,19 @@ failed = agent_rc != "0"
 marked = False
 
 full = "\n".join(texts)
-# Markers count only on a line of their own: a review can mention them in its
-# text (a "Checked:" line about this very parser did), and an inline mention
-# must not be taken for the start or end of the block.
-opens = list(re.finditer(r"^[ \t]*<<<REVIEW[ \t]*\r?$", full, re.M))
+# Markers count only at the end (open) or start (close) of a line: a review
+# can mention them mid-sentence (a "Checked:" line about this very parser
+# did), and that must not be taken for the start or end of the block.
+# A marker also counts at the end of a line ("…output.<<<REVIEW"), and with
+# two angle brackets instead of three, which small models write.
+opens = list(re.finditer(r"<<<?REVIEW[ \t]*\r?$", full, re.M))
 if opens:
     marked = True
     review = full[opens[-1].end():]
     # Stop at a line starting with REVIEW>>> (anything after it on that line
     # is dropped), else at a bare REVIEW line, else run to the end minus a
     # trailing ``` the model wrapped the block in.
-    for end in (r"^[ \t]*REVIEW>>>", r"^[ \t]*REVIEW[ \t]*\r?$"):
+    for end in (r"^[ \t]*REVIEW>>>?", r"^[ \t]*REVIEW[ \t]*\r?$"):
         parts = re.split(end, review, maxsplit=1, flags=re.M)
         if len(parts) == 2:
             review = parts[0]
@@ -124,7 +169,7 @@ else:
         print(review)
         print("\n</details>")
     else:
-        print(review)
+        print(decorate(review))
 print("\n---")
 print(f"<sub>OpenCode · `{model}`{' (fallback: ' + fell_back + ')' if fell_back else ''} · `{sha}` · {len(tools)} tool calls ({tool_summary}) · "
       f"{usage} · {elapsed}s · [run]({run_url}) · "

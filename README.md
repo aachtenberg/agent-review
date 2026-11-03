@@ -4,9 +4,14 @@ Agentic pull-request reviews for GitHub Actions, with no vendor lock-in.
 
 [OpenCode](https://github.com/anomalyco/opencode) (MIT) runs as an agent on a full, **read-only** checkout of the PR. It reads the diff, then greps for and reads whatever uses each change: callers in other files, manifests that reference a renamed label, scripts that read a changed config key. It posts a short review as a PR comment:
 
-> - **[high]** `k3s/base/data/postgrest.yml:88` The Service now selects `postgrest-api`, but the pods are labelled `postgrest`, so the Service has no endpoints and every ingest job that calls it fails. Fix: revert the selector.
+> **1 finding**: 1 high
+>
+> 1. 🔴 **High** · `k3s/base/data/postgrest.yml:88`: Service selector changed to a label no pod carries.
+>    - **Breaks:** the `postgrest` Service selects zero pods, so every consumer of `postgrest.data.svc:3000` gets connection refused.
+>    - **Affected:** `k3s/base/data/swe-ingest.yml`, `k3s/base/data/river-history.yml`, and 10 more
+>    - **Fix:** revert the selector to `app.kubernetes.io/name: postgrest`.
 
-If it finds nothing, it posts `No issues found.` plus one `Checked:` line saying what it read.
+If it finds nothing, it posts ✅ `No issues found.` plus one `Checked:` line saying what it read.
 
 The model is any [OpenCode provider/model](https://opencode.ai/docs/models/). The default is GLM 5.3 Flash via [OpenRouter](https://openrouter.ai), at about **$0.001–0.02 per review**. A local Ollama model can be the fallback, or the main model.
 
@@ -43,9 +48,11 @@ Bundled `ollama/` models: `gpt-oss:20b` and `hf.co/unsloth/Qwen3.5-35B-A3B-GGUF:
 
 | Heading | Meaning |
 |---|---|
-| **🔎 Agent review** | The review: findings most severe first (at most 5), or `No issues found.` |
+| **🔎 Agent review** | The review: a count line, then numbered findings, most severe first (at most 5), each with **Breaks**, optionally **Affected**, and **Fix**. Or ✅ `No issues found.` |
 | **🔎 Agent review** with a folded *"Agent's last message (not a review)"* | The agent finished without writing its review block. Its last message is folded away rather than posted; comment `/review` to retry. |
 | **⚠️ Agent review failed** | The agent exited with an error, hit its time limit, or couldn't run (for example, no key and no fallback). Any partial output is folded away, and the job fails. |
+
+The model writes the structure; `render.py` adds the presentation, so it looks the same whichever model wrote it: the severity icons (🔴 high, 🟠 medium, 🟡 low), the count line, and links from each `path:line` to that line at the PR's head commit.
 
 The footer shows the model that wrote the review, and the reason if it fell back. It also shows the commit, tool calls by type, tokens, cost (when the provider reports it), duration, and a link to the run.
 

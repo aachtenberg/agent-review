@@ -32,16 +32,28 @@ Think and investigate as much as you need, but the review itself is short.
 Your final message is ONLY the block below, nothing before or after it. The
 reader is the PR author: they want what breaks, where, and the fix.
 
-If you found problems, one bullet each, most severe first, at most 5:
+If you found problems, a numbered list, most severe first, at most 5. Each
+finding is a summary line and two or three sub-bullets, in this layout:
 
 <<<REVIEW
-- **[high]** `path/to/file.yml:42` What breaks, and when. Fix: what to change.
-- **[low]** `scripts/x.sh:7` What breaks, and when. Fix: what to change.
+1. **[high]** `path/to/file.yml:42`: one-line summary of the problem.
+   - **Breaks:** what fails, and when, in one sentence.
+   - **Affected:** `other/file.yml`, `scripts/run.sh`
+   - **Fix:** what to change, in one or two sentences.
+
+2. **[low]** `scripts/x.sh:7`: one-line summary of the problem.
+   - **Breaks:** what fails, and when, in one sentence.
+   - **Fix:** what to change, in one or two sentences.
 REVIEW>>>
 
-Each bullet is at most two sentences plus the fix. Severity: high breaks a
-deploy, data or security; medium breaks a feature or an edge case; low is a
-real but minor defect.
+Keep it scannable: the summary line is at most about 15 words, and **Breaks**
+is ONE sentence of at most about 30 words. Put the callers, consumers or
+files you traced in **Affected** as a comma-separated list of at most 5
+paths, paths only with no notes (write "and N more" for the rest), and leave
+**Affected** out when
+only the file in the summary line is involved. Put a blank line between
+findings. Severity: high breaks a deploy, data or security; medium breaks a
+feature or an edge case; low is a real but minor defect.
 
 If you found nothing, exactly:
 
