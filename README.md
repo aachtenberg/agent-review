@@ -101,3 +101,7 @@ The PR's code is untrusted input to an agent that can run commands:
 - `review/render.py`: turns the agent's events into the comment
 - `examples/agent-review.yml`: the caller to copy into each repo
 - `.github/workflows/agent-review.yml`: this repo reviewing its own PRs
+
+## License
+
+[MIT](LICENSE). OpenCode, which this runs, is also MIT.
