@@ -80,6 +80,15 @@ jobs:
         && github.event.issue.pull_request
         && github.event.comment.author_association == 'OWNER'
         && startsWith(github.event.comment.body, '/review'))
+    # A newer /review (or reopen) supersedes a run in progress. This lives
+    # here, on the job, rather than in the caller: a caller run whose job is
+    # skipped (any other comment, e.g. a bot's) never reaches this workflow,
+    # so it never joins the group and can't cancel a live review. Callers
+    # carry no concurrency of their own; the group name differs from the
+    # old caller-level one so a not-yet-updated caller can't deadlock it.
+    concurrency:
+      group: agent-review-run-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
