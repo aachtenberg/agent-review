@@ -13,10 +13,6 @@ permissions:
   pull-requests: write
   issues: write
 
-concurrency:
-  group: agent-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     # Same-repo PRs only, and /review only from the repo owner.
@@ -28,6 +24,12 @@ jobs:
         && github.event.issue.pull_request
         && github.event.comment.author_association == 'OWNER'
         && startsWith(github.event.comment.body, '/review'))
+    # Concurrency sits on the job, not the workflow: a run whose job is
+    # skipped (any non-/review comment, e.g. a bot's) never joins the group,
+    # so it can't cancel a review in progress.
+    concurrency:
+      group: agent-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     uses: aachtenberg/agent-review/.github/workflows/review.yml@v1
     # Public repo: GitHub-hosted runner, GLM 5.3 Flash via OpenRouter.
     with:
