@@ -16,7 +16,8 @@ name: Agent Review (reusable)
 # names the model that wrote the review.
 #
 # Isolation: the PR's code is untrusted input to an agent that runs commands.
-#   - Same-repo PRs only (fork PRs never run), /review only from the owner.
+#   - Same-repo PRs only (fork PRs never run), /review only from the owner
+#     or an org member (author_association OWNER or MEMBER).
 #   - The agent runs in a throwaway container; the PR checkout is mounted
 #     read-only; OPENCODE_DISABLE_PROJECT_CONFIG ignores any opencode.json or
 #     AGENTS.md the PR adds.
@@ -78,7 +79,7 @@ jobs:
         && github.event.pull_request.head.repo.full_name == github.repository)
       || (github.event_name == 'issue_comment'
         && github.event.issue.pull_request
-        && github.event.comment.author_association == 'OWNER'
+        && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
         && startsWith(github.event.comment.body, '/review'))
     # A newer /review (or reopen) supersedes a run in progress. This lives
     # here, on the job, rather than in the caller: a caller run whose job is

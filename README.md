@@ -27,8 +27,8 @@ The model is any [OpenCode provider/model](https://opencode.ai/docs/models/). Th
 ## When it runs
 
 - **Automatically:** when a PR is opened, reopened, or marked ready for review. Drafts are skipped.
-- **On demand:** when the repo owner comments `/review` on a PR. The comment gets 👀 when the run starts, then 🚀 when the review is posted, or 👎 if the run failed. A newer `/review` cancels a run still in progress; the cancelled run posts nothing and gets no reaction.
-- **Never** for PRs from forks, and never for `/review` from anyone but the owner.
+- **On demand:** when the repo owner, or a member of the org that owns the repo, comments `/review` on a PR. The comment gets 👀 when the run starts, then 🚀 when the review is posted, or 👎 if the run failed. A newer `/review` cancels a run still in progress; the cancelled run posts nothing and gets no reaction.
+- **Never** for PRs from forks, and never for `/review` from anyone but the owner or an org member (GitHub's `author_association` of `OWNER` or `MEMBER`; in an org-owned repo even the owner's own comments carry `MEMBER`).
 
 ## Inputs
 
@@ -82,7 +82,7 @@ The reviewed code goes to the model provider: OpenRouter, then whichever lab ser
 
 The PR's code is untrusted input to an agent that can run commands:
 
-- **Who can trigger it:** only same-repo PRs, and `/review` only from the owner. The workflow checks this in the caller and again inside.
+- **Who can trigger it:** only same-repo PRs, and `/review` only from the owner or an org member. The workflow checks this in the caller and again inside.
 - **The PR can't change its review:** the prompt, config and tools always come from this repo, at `config_ref`. `OPENCODE_DISABLE_PROJECT_CONFIG` makes OpenCode ignore any `opencode.json` or `AGENTS.md` the PR adds.
 - **Where it runs:** a throwaway container, with the checkout mounted **read-only**.
 - **What it can do:** read, grep, glob and list inside the checkout, plus one shell command, [`git-ro`](review/git-ro). OpenCode's bash rules match the raw command string, and shell quoting gets past them, so the real boundary is the wrapper. It allows `diff`, `log`, `show`, `blame` and `merge-base` with a fixed set of options, requires every path to resolve inside the checkout, and runs git with an empty environment. The bash rules also refuse `$`, `` ` ``, `<` and `>`.
