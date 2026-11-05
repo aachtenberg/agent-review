@@ -1,0 +1,37 @@
+name: Agent image
+# Builds image/ and pushes it to ghcr.io/aachtenberg/agent-review, tagged
+# sha-<commit>. review.yml pins the image by digest, so a push here changes
+# nothing until a commit updates AGENT_IMAGE there. It runs on any branch
+# that changes image/, so a PR can build its image and then pin it.
+on:
+  push:
+    paths:
+      - image/**
+      - .github/workflows/image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --pull -t "$IMAGE" image
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "pushed $digest"
+          printf 'Pin in review.yml:\n\n```\nAGENT_IMAGE: %s\n```\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
