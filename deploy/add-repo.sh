@@ -87,7 +87,8 @@ if [ "$vis" != PUBLIC ]; then
       mkdir \"\$d\" && cd \"\$d\"
       tgz=\$(ls \$HOME/actions-runner-*/actions-runner-linux-x64-*.tar.gz 2>/dev/null | head -1 || true)
       if [ -z \"\$tgz\" ]; then
-        tgz=\$d/runner.tar.gz
+        # Named like the release, so the next setup finds and reuses it.
+        tgz=\$d/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz
         curl -sSfLo \"\$tgz\" https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz
       fi
       tar xzf \"\$tgz\"
