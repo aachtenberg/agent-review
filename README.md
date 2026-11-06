@@ -66,9 +66,9 @@ The agent also reads `README.md`, and `AGENTS.md`, `CLAUDE.md` or `.github/copil
 
 GitHub-hosted runners need nothing extra. A self-hosted runner needs:
 
-- **Docker,** usable by the runner's user. The agent runs in `node:22-bookworm-slim`, pinned by digest, limited to 4 GB of memory and 2 CPUs.
+- **Docker,** usable by the runner's user. The agent runs in `ghcr.io/aachtenberg/agent-review`, built from [`image/`](image/Dockerfile) and pinned by digest, limited to 4 GB of memory and 2 CPUs. It holds OpenCode, git and ripgrep, so a run installs nothing. The image is x86-64 only.
 - **`gh`, `python3` and `git`** on the host.
-- **Outbound access to:** Docker Hub, `deb.debian.org`, `registry.npmjs.org` (git and OpenCode are installed into the container on every run), GitHub, and the model provider.
+- **Outbound access to:** `ghcr.io` (once per image version: Docker keeps the image), GitHub, `models.dev` (OpenCode's model list), and the model provider.
 
 Use a self-hosted runner for private repos only. A public repo's workflows can be triggered by anyone who opens a PR, so they belong on GitHub-hosted runners.
 
@@ -93,11 +93,13 @@ The PR's code is untrusted input to an agent that can run commands:
 
 - **Time:** 15 minutes per attempt, so up to 2 attempts with a fallback, and 40 minutes for the job.
 - **Length:** the comment body is capped at 60,000 characters.
-- **Pinned versions:** OpenCode `1.19.3` and the container image. Updating either is a change to this repo.
+- **Pinned versions:** the image, by digest in `review.yml`. Inside it: the base image by digest, OpenCode `1.19.3` by its npm integrity hash, and ripgrep `15.1.0` by sha256. To update one, change [`image/`](image/), let [`image.yml`](.github/workflows/image.yml) build and push it, then pin the digest from that run's summary. Callers pull the image without logging in, so the package must stay public; `image.yml` fails if it isn't.
 
 ## Versioning
 
 `v1` is a moving tag. It is moved to each tested change on `main`, and callers that use `@v1` pick it up on their next run. To freeze a repo on one version, pin both `uses: …@<commit-sha>` and `config_ref: <commit-sha>`.
+
+A repo that calls `@v1` trusts whoever can move that tag, which is this repo's owner. Whatever `v1` points to, including the image digest it pins, runs with that repo's PR code, its `OPENROUTER_API_KEY`, and a `GITHUB_TOKEN` that can read its contents and write PR and issue comments. That's fine for the owner's own repos. If you adopt this from outside, pin both refs to a commit SHA you have read, and move them on purpose.
 
 ## Layout
 
@@ -106,6 +108,7 @@ The PR's code is untrusted input to an agent that can run commands:
 - `review/opencode.json`: OpenCode providers and permissions
 - `review/git-ro`: the read-only git wrapper
 - `review/render.py`: turns the agent's events into the comment
+- `image/`: the container the agent runs in, built and pushed by `.github/workflows/image.yml`
 - `examples/agent-review.yml`: the caller to copy into each repo
 - `.github/workflows/agent-review.yml`: this repo reviewing its own PRs
 

@@ -62,9 +62,9 @@ on:
         required: false
 
 env:
-  OPENCODE_VERSION: 1.19.3
-  # node:22-bookworm-slim, pinned by digest; bump both together.
-  AGENT_IMAGE: node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+  # Built from image/ by image.yml: OpenCode, git and ripgrep, so a run fetches
+  # no code. Pinned by digest; take the new one from image.yml's run summary.
+  AGENT_IMAGE: ghcr.io/aachtenberg/agent-review@sha256:98e24a871ec14ef49da0e82f7e72a74263d47b66c21d8edeb82b994f0be8e9d9
   MODEL: ${{ inputs.model }}
   FALLBACK_MODEL: ${{ inputs.fallback_model }}
   OLLAMA_BASE_URL: ${{ inputs.ollama_base_url }}
@@ -186,7 +186,7 @@ jobs:
             local key_env=()
             case "$1" in openrouter/*) key_env=(-e OPENROUTER_API_KEY) ;; esac
             echo "=== $1" >> "$RUNNER_TEMP/agent.log"
-            docker run --rm --pull=missing --memory=4g --cpus=2 \
+            docker run --rm --init --pull=missing --memory=4g --cpus=2 \
               -v "$GITHUB_WORKSPACE/pr:/work:ro" \
               -v "$cfg/opencode.json:/cfg/opencode.json:ro" \
               -v "$cfg/git-ro:/usr/local/bin/git-ro:ro" \
@@ -196,14 +196,9 @@ jobs:
               -e OPENCODE_DISABLE_AUTOUPDATE=1 \
               -e OLLAMA_BASE_URL \
               "${key_env[@]}" \
-              -e MODEL="$1" -e PROMPT="$prompt" -e OPENCODE_VERSION \
-              "$AGENT_IMAGE" bash -c '
-                set -e
-                apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
-                git config --global --add safe.directory /work
-                npm install -g --silent "opencode-ai@${OPENCODE_VERSION}" >/dev/null 2>&1
-                timeout 900 opencode run --model "$MODEL" --format json "$PROMPT"
-              ' > "$RUNNER_TEMP/events.jsonl" 2>> "$RUNNER_TEMP/agent.log"
+              "$AGENT_IMAGE" \
+              timeout 900 opencode run --model "$1" --format json "$prompt" \
+              > "$RUNNER_TEMP/events.jsonl" 2>> "$RUNNER_TEMP/agent.log"
           }
           start=$(date +%s)
           used=$MODEL fell_back="" note="" rc=0

@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "OpenCode for the agent-review image. The baseline x64 build runs on any x64 CPU, with or without AVX2.",
+  "dependencies": {
+    "opencode-linux-x64-baseline": "1.19.3"
+  }
+}

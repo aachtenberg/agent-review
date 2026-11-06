@@ -1,0 +1,50 @@
+name: Agent image
+# Builds image/ and pushes it to ghcr.io/aachtenberg/agent-review, tagged
+# sha-<commit>. review.yml pins the image by digest, so a push here changes
+# nothing until a commit updates AGENT_IMAGE there. It runs on any branch
+# that changes image/, so a PR can build its image and then pin it.
+on:
+  push:
+    paths:
+      - image/**
+      - .github/workflows/image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --pull -t "$IMAGE" image
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "pushed $digest"
+          # Callers pull with no ghcr.io login, so the package must be public.
+          # Pushed by GITHUB_TOKEN from this public repo, it inherits the
+          # repo's visibility; check that rather than assume it.
+          repo=${GITHUB_REPOSITORY,,}
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:$repo:pull" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])') || token=""
+          if [ -z "$token" ] || ! curl -sSf -o /dev/null -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/$repo/manifests/${digest#*@}"; then
+            echo "::error::$digest can't be pulled without credentials, so reviews would fail; make the package public in its settings"
+            exit 1
+          fi
+          echo "pullable without credentials"
+          printf 'Pin in review.yml:\n\n```\nAGENT_IMAGE: %s\n```\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
