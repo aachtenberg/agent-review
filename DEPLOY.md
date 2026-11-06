@@ -87,7 +87,7 @@ Keep `opencode-linux-x64-baseline` in `image/package.json`. `ubuntu-itx-01`'s CP
 
 | What you see | What to do |
 |---|---|
-| No review on a PR | Drafts and PRs from forks are skipped. Mark the PR ready for review. |
+| No review on a PR | **A draft:** mark it ready for review. **From a fork:** skipped on purpose; nothing to do. **The PR that adds the workflow:** normal; reviews start once it's merged. |
 | `/review` does nothing | Only the repo owner can use `/review`. Anyone else can close the PR and reopen it, which runs a new review. |
 | A private repo's review stays "Queued" | Its runner is down. Run `./deploy/add-repo.sh <repo> --dry-run`; it says what's wrong and how to fix it. |
 | ⚠️ **Agent review failed** … no `OPENROUTER_API_KEY` | Run `./deploy/add-repo.sh <repo>`. It asks for the key. |
