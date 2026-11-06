@@ -9,7 +9,7 @@ name: Agent Review (reusable)
 # from this repo at `config_ref`, never from the repo under review, so a PR
 # cannot change how it is reviewed.
 #
-# Model: any OpenCode provider/model. The default is GLM 5.3 Flash via
+# Model: any OpenCode provider/model. The default is DeepSeek V4.1 Flash via
 # OpenRouter (needs the OPENROUTER_API_KEY secret). With `fallback_model`
 # set, a failed first attempt (or a missing key) is retried once with it,
 # e.g. a local Ollama model on a self-hosted runner. The comment's footer
@@ -44,7 +44,7 @@ on:
       model:
         description: OpenCode provider/model for the review.
         type: string
-        default: openrouter/z-ai/glm-5.3-flash
+        default: openrouter/deepseek/deepseek-v4.1-flash
       fallback_model:
         description: Model to retry with once if the first attempt fails or has no key. Empty for none.
         type: string

@@ -2,7 +2,7 @@
 
 An AI reviewer for pull requests, run in GitHub Actions. It reads the change, follows it to the code that uses it, and comments with what breaks and how to fix it.
 
-[OpenCode](https://github.com/anomalyco/opencode) does the work, with whichever model you pick. The default, GLM 5.3 Flash on [OpenRouter](https://openrouter.ai), costs about **$0.001–0.02 a review**. A local Ollama model works too.
+[OpenCode](https://github.com/anomalyco/opencode) does the work, with whichever model you pick. The default, DeepSeek V4.1 Flash on [OpenRouter](https://openrouter.ai), costs about **$0.001–0.02 a review**. A local Ollama model works too.
 
 A review looks like this:
 
@@ -54,7 +54,7 @@ The agent only reads. It can't change the code, push or comment. The workflow po
 | Input | Default | What it does |
 |---|---|---|
 | `runner` | `ubuntu-latest` | The runner to use (`runs-on`) |
-| `model` | `openrouter/z-ai/glm-5.3-flash` | Any [OpenCode `provider/model`](https://opencode.ai/docs/models/) |
+| `model` | `openrouter/deepseek/deepseek-v4.1-flash` | Any [OpenCode `provider/model`](https://opencode.ai/docs/models/) |
 | `fallback_model` | none | Tried once if the first model fails or has no key |
 | `ollama_base_url` | none | Your Ollama endpoint for `ollama/` models, e.g. `http://host:11434/v1` |
 | `config_ref` | `v1` | The version of this repo to read the prompt and config from. Keep it the same as the `@ref` in `uses:` |
