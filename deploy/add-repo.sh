@@ -123,6 +123,7 @@ else
   url=$(gh api "repos/$OWNER/homelab-infra/contents/$WF" --jq .content 2>/dev/null \
     | base64 -d | sed -n 's/^ *ollama_base_url: *//p' | head -1 || true)
   [ -n "$url" ] || read -rp "    Ollama URL (like http://host:11434/v1): " url
+  [ -n "$url" ] || die "No Ollama URL, so the fallback model wouldn't work. Ask the owner for it, then run this again."
   # Keep the example's private `with:` block, uncommented, and drop the public one.
   python3 -I - "$HERE/examples/agent-review.yml" "$url" > "$tmp/wf.yml" <<'PY'
 import re, sys
