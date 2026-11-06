@@ -19,6 +19,38 @@ BRANCH=add-agent-review
 WF=.github/workflows/agent-review.yml
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 
+# What runs on the runner host to set up a repo's runner. Arguments:
+# repo name, owner/repo, registration token, runner name, label, version.
+# If anything fails before the runner is registered, its folder is
+# removed, so running add-repo.sh again starts clean.
+RUNNER_SETUP=$(cat <<'SH'
+set -euo pipefail
+name=$1 repo=$2 token=$3 runner=$4 label=$5 ver=$6
+d=$HOME/actions-runner-$name
+if [ -e "$d" ]; then
+  echo "$d already exists. Ask the owner to look at it."; exit 1
+fi
+fail() { echo "$1"; cd "$HOME"; rm -rf "$d"; exit 1; }
+mkdir "$d" && cd "$d"
+# Reuse another runner's download if there is one: the runner updates
+# itself, so its version doesn't matter.
+tgz=$(ls "$HOME"/actions-runner-*/actions-runner-linux-x64-*.tar.gz 2>/dev/null | head -1 || true)
+if [ -z "$tgz" ]; then
+  # Saved under a .part name first, so a cut-off download is never reused.
+  curl -sSfLo dl.part "https://github.com/actions/runner/releases/download/v$ver/actions-runner-linux-x64-$ver.tar.gz" \
+    || fail "Couldn't download the runner. Check the machine's internet, then run add-repo.sh again."
+  tgz=$d/actions-runner-linux-x64-$ver.tar.gz
+  mv dl.part "$tgz"
+fi
+tar xzf "$tgz" \
+  || fail "Couldn't unpack $tgz. It may be damaged: delete it, then run add-repo.sh again."
+./config.sh --unattended --url "https://github.com/$repo" --token "$token" --name "$runner" --labels "$label" \
+  || fail "Couldn't register the runner with GitHub. Run add-repo.sh again; if it fails twice, ask the owner."
+sudo ./svc.sh install
+sudo ./svc.sh start
+SH
+)
+
 step() { printf '\n==> %s\n' "$*"; }
 ok()   { printf '    ✓ %s\n' "$*"; }
 todo() { printf '    • %s\n' "$*"; }
@@ -81,20 +113,8 @@ if [ "$vis" != PUBLIC ]; then
       || die "Can't ssh to $RUNNER_HOST. Ask the owner for access, then run this again."
     token=$(gh api -X POST "repos/$R/actions/runners/registration-token" --jq .token)
     echo "    Installing. It will ask for your sudo password on $RUNNER_HOST."
-    ssh -t "$RUNNER_HOST" "set -e
-      d=\$HOME/actions-runner-$name
-      if [ -e \"\$d\" ]; then echo \"\$d already exists. Ask the owner to look at it.\"; exit 1; fi
-      mkdir \"\$d\" && cd \"\$d\"
-      tgz=\$(ls \$HOME/actions-runner-*/actions-runner-linux-x64-*.tar.gz 2>/dev/null | head -1 || true)
-      if [ -z \"\$tgz\" ]; then
-        # Named like the release, so the next setup finds and reuses it.
-        tgz=\$d/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz
-        curl -sSfLo \"\$tgz\" https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz
-      fi
-      tar xzf \"\$tgz\"
-      ./config.sh --unattended --url https://github.com/$R --token $token --name $RUNNER_HOST --labels $LABEL
-      sudo ./svc.sh install
-      sudo ./svc.sh start"
+    ssh -t "$RUNNER_HOST" "bash -c $(printf %q "$RUNNER_SETUP") _ $(printf '%q ' \
+      "$name" "$R" "$token" "$RUNNER_HOST" "$LABEL" "$RUNNER_VERSION")"
     for _ in $(seq 12); do
       gh api "repos/$R/actions/runners" --jq '.runners[].status' | grep -x online >/dev/null && break
       sleep 5

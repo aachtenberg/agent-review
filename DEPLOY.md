@@ -31,6 +31,7 @@ Add `--dry-run` to `add-repo.sh` or `release.sh` to see what it would do without
    ```
    If it fails, ask the owner for access. For private repos you'll also need your `sudo` password on that machine.
 4. **Have the OpenRouter API key ready.** The script asks for it only if the repo doesn't have it yet. Ask the owner for it.
+5. **For private repos, you may need the Ollama address.** The script copies it from homelab-infra. If it can't, it asks for an address like `http://host:11434/v1`. Ask the owner for it.
 
 ## Add the reviewer to a repo
 
