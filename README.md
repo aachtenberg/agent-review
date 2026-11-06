@@ -43,6 +43,8 @@ The agent only reads. It can't change the code, push or comment. The workflow po
 3. Add the repo secret `OPENROUTER_API_KEY`. You don't need it if your `model` is an `ollama/…` model.
 4. Merge it. Reviews start on the **next** PR: GitHub runs this workflow from the default branch, so the PR that adds it can't review itself.
 
+**Easier:** `./deploy/add-repo.sh <repo>` does all of this, including the runner for a private repo. [DEPLOY.md](DEPLOY.md) is the step-by-step guide: adding a repo, releasing a change to every repo, and undoing it.
+
 ## When it runs
 
 - **By itself:** when a PR is opened, reopened, or marked ready for review. Drafts are skipped.
@@ -160,6 +162,8 @@ Using `@v1` means trusting whoever can move that tag, which is this repo's owner
 | `review/render.py` | Turns the agent's output into the comment |
 | `image/` | The container image, built by `.github/workflows/image.yml` |
 | `examples/agent-review.yml` | The workflow to copy into your repo |
+| `DEPLOY.md` | The deploy guide |
+| `deploy/` | Scripts: `add-repo.sh`, `release.sh`, `list-repos.sh` |
 | `.github/workflows/agent-review.yml` | This repo reviewing its own PRs |
 
 ## License

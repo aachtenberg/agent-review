@@ -32,7 +32,7 @@ jobs:
     # Private repo: our self-hosted runner, with the local Ollama as fallback.
     # with:
     #   runner: ubuntu-itx-01
-    #   fallback_model: ollama/gpt-oss:20b
+    #   fallback_model: ollama/gemma4:26b
     #   ollama_base_url: http://<ollama-host>:11434/v1
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
