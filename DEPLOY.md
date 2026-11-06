@@ -25,11 +25,11 @@ Add `--dry-run` to `add-repo.sh` or `release.sh` to see what it would do without
    gh repo clone aachtenberg/agent-review
    cd agent-review
    ```
-3. **Check you can reach the runner machine,** `ubuntu-itx-01`. Private repos and releases need it. This should print nothing, with no error:
+3. **Check you can reach the runner machine,** `ubuntu-itx-01`, with an ssh key (not a password). Private repos and releases need it. This should print nothing, with no error:
    ```sh
-   ssh ubuntu-itx-01 true
+   ssh -o BatchMode=yes ubuntu-itx-01 true
    ```
-   If it fails, ask the owner for access. For private repos you'll also need your `sudo` password on that machine.
+   If it fails, ask the owner to add your ssh key. For private repos you'll also need your `sudo` password on that machine.
 4. **Have the OpenRouter API key ready.** The script asks for it only if the repo doesn't have it yet. Ask the owner for it.
 5. **For private repos, you may need the Ollama address.** The script copies it from homelab-infra. If it can't, it asks for an address like `http://host:11434/v1`. Ask the owner for it.
 
