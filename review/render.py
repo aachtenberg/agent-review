@@ -5,7 +5,9 @@ The review is the text between <<<REVIEW and REVIEW>>> in the agent's output.
 Markers count only on a line of their own. A closing marker the model
 mangled (a bare `REVIEW` line, or none) still counts: the block then runs to that line or to the end. With no opening
 marker, the last text part is folded into <details> under a note, since it is
-usually the model thinking aloud rather than a review. The footer reports
+usually the model thinking aloud rather than a review. A block that is a
+verbatim copy of one of prompt.md's examples (a model quoting its prompt) is
+not a review either, and is skipped. The footer reports
 the model, commit, tool calls, tokens/cost (when the provider reports them)
 and duration, so reviews from different models can be compared.
 
@@ -101,15 +103,8 @@ failed = agent_rc != "0"
 marked = False
 
 full = "\n".join(texts)
-# Markers count only at the end (open) or start (close) of a line: a review
-# can mention them mid-sentence (a "Checked:" line about this very parser
-# did), and that must not be taken for the start or end of the block.
-# A marker also counts at the end of a line ("…output.<<<REVIEW"), and with
-# two angle brackets instead of three, which small models write.
-opens = list(re.finditer(r"<<<?REVIEW[ \t]*\r?$", full, re.M))
-if opens:
-    marked = True
-    review = full[opens[-1].end():]
+def block_after(m):
+    review = full[m.end():]
     # Stop at a line starting with REVIEW>>> (anything after it on that line
     # is dropped), else at a bare REVIEW line, else run to the end minus a
     # trailing ``` the model wrapped the block in.
@@ -120,12 +115,38 @@ if opens:
             break
     else:
         review = re.sub(r"\n[ \t]*```[ \t]*\Z", "", review.rstrip())
-    review = review.strip()
-elif texts:
+    return review.strip()
+
+
+def squash(s):
+    return " ".join(s.split())
+
+
+# The example blocks in prompt.md. A model that quotes the prompt writes one
+# of these verbatim; that is not its review, so such a block is skipped and
+# the one before it counts, or none (⚠️ No review). Only an exact copy, up to
+# whitespace, is skipped, so a real review that mentions the examples counts.
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt.md")) as f:
+        prompt = f.read()
+    TEMPLATES = {squash(b) for b in re.findall(r"^<<<REVIEW\n(.*?)^REVIEW>>>", prompt, re.M | re.S)}
+except OSError:
+    TEMPLATES = set()
+
+# Markers count only at the end (open) or start (close) of a line: a review
+# can mention them mid-sentence (a "Checked:" line about this very parser
+# did), and that must not be taken for the start or end of the block.
+# A marker also counts at the end of a line ("…output.<<<REVIEW"), and with
+# two angle brackets instead of three, which small models write.
+opens = list(re.finditer(r"<<<?REVIEW[ \t]*\r?$", full, re.M))
+for m in reversed(opens):
+    block = block_after(m)
+    if squash(block) not in TEMPLATES:
+        marked, review = True, block
+        break
+if not marked:
     # No marked block: what's there is usually the model thinking aloud.
-    review = texts[-1].strip()
-else:
-    review = ""
+    review = texts[-1].strip() if texts else ""
 
 if len(review) > MAX:
     review = review[:MAX] + "\n\n_(truncated)_"
