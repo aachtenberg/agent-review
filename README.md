@@ -93,7 +93,7 @@ The PR's code is untrusted input to an agent that can run commands:
 
 - **Time:** 15 minutes per attempt, so up to 2 attempts with a fallback, and 40 minutes for the job.
 - **Length:** the comment body is capped at 60,000 characters.
-- **Pinned versions:** the image, by digest in `review.yml`. Inside it: the base image by digest, OpenCode `1.19.3` by its npm integrity hash, and ripgrep `15.1.0` by sha256. To update one, change [`image/`](image/), let [`image.yml`](.github/workflows/image.yml) build and push it, then pin the digest from that run's summary.
+- **Pinned versions:** the image, by digest in `review.yml`. Inside it: the base image by digest, OpenCode `1.19.3` by its npm integrity hash, and ripgrep `15.1.0` by sha256. To update one, change [`image/`](image/), let [`image.yml`](.github/workflows/image.yml) build and push it, then pin the digest from that run's summary. Callers pull the image without logging in, so the package must stay public; `image.yml` fails if it isn't.
 
 ## Versioning
 
