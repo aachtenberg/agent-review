@@ -9,11 +9,16 @@ name: Agent Review (reusable)
 # from this repo at `config_ref`, never from the repo under review, so a PR
 # cannot change how it is reviewed.
 #
-# Model: any OpenCode provider/model. The default is DeepSeek V4.1 Flash via
+# Model: any OpenCode provider/model. The default is GLM 5.3 Flash via
 # OpenRouter (needs the OPENROUTER_API_KEY secret). With `fallback_model`
 # set, a failed first attempt (or a missing key) is retried once with it,
 # e.g. a local Ollama model on a self-hosted runner. The comment's footer
 # names the model that wrote the review.
+#
+# Re-reviews: when the PR already has a review by the main model, the next
+# one checks that review's findings and reviews only the commits since
+# (review/previous.py decides; review/scope-rereview.md says how).
+# `/review full` reviews the whole PR again.
 #
 # Isolation: the PR's code is untrusted input to an agent that runs commands.
 #   - Same-repo PRs only (fork PRs never run), /review only from the owner
@@ -44,7 +49,7 @@ on:
       model:
         description: OpenCode provider/model for the review.
         type: string
-        default: openrouter/deepseek/deepseek-v4.1-flash
+        default: openrouter/z-ai/glm-5.3-flash
       fallback_model:
         description: Model to retry with once if the first attempt fails or has no key. Empty for none.
         type: string
@@ -153,6 +158,29 @@ jobs:
             esac
           done
 
+      # A re-review builds on the last review by the main model: it checks
+      # those findings and reviews the commits since. previous.py falls back
+      # to a full review when that can't work (rebase, merge, `/review full`).
+      # It reads only this workflow's own comments (github-actions[bot]).
+      - name: Find the last review
+        id: prev
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          # Matched against `/review full` only; never run or substituted.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          if ! gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+              --jq '.[] | {login: .user.login, body: .body}' > "$RUNNER_TEMP/comments.jsonl"; then
+            echo "::warning::couldn't list the PR's comments; reviewing the whole PR"
+            : > "$RUNNER_TEMP/comments.jsonl"
+          fi
+          python3 -I reviewer/review/previous.py "$RUNNER_TEMP/comments.jsonl" pr "$HEAD_SHA" \
+            "$RUNNER_TEMP/earlier.md" | tee -a "$GITHUB_OUTPUT"
+
       - name: Review
         env:
           # Handed to the container only for an openrouter/ model (below).
@@ -161,9 +189,12 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          # Empty for a full review.
+          PREV_SHA: ${{ steps.prev.outputs.prev_sha }}
         run: |
           set -euo pipefail
           cfg="$GITHUB_WORKSPACE/reviewer/review"
+          [ -f "$RUNNER_TEMP/earlier.md" ] || : > "$RUNNER_TEMP/earlier.md"
           # fetch-depth: 0 brought every branch, so BASE_SHA is present for
           # `git-ro diff BASE...HEAD` inside the container.
           git -C pr cat-file -e "$BASE_SHA^{commit}"
@@ -172,14 +203,21 @@ jobs:
           git -C pr show "$BASE_SHA:.github/agent-review.md" > "$RUNNER_TEMP/notes.md" 2>/dev/null || : > "$RUNNER_TEMP/notes.md"
           # Plain string replacement: a ref may contain / & or \, which a sed
           # replacement would misread.
+          # The scope is the opening of a full review or of a re-review. The
+          # earlier findings go in last, so nothing in them is substituted.
           prompt="$(python3 -I -c 'import os,sys
-          t = open(sys.argv[1]).read()
-          for k in ("BASE_SHA", "HEAD_SHA", "BASE_REF", "PR_NUMBER"):
-              t = t.replace("{{" + k + "}}", os.environ[k])
+          cfg, prev = sys.argv[1], os.environ.get("PREV_SHA", "")
+          t = open(cfg + "/prompt.md").read()
+          scope = open(cfg + ("/scope-rereview.md" if prev else "/scope-full.md")).read().strip()
+          t = t.replace("{{SCOPE}}", scope)
+          for k in ("BASE_SHA", "HEAD_SHA", "BASE_REF", "PR_NUMBER", "PREV_SHA"):
+              t = t.replace("{{" + k + "}}", os.environ.get(k, ""))
+          if prev:
+              t = t.replace("{{PREV_FINDINGS}}", open(sys.argv[3]).read().strip() or "(none recorded)")
           notes = open(sys.argv[2]).read().strip()[:4000]
           if notes:
               t += "\n## Notes for this repository (from .github/agent-review.md)\n\n" + notes + "\n"
-          sys.stdout.write(t)' "$cfg/prompt.md" "$RUNNER_TEMP/notes.md")"
+          sys.stdout.write(t)' "$cfg" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/earlier.md")"
           # run_agent MODEL: one attempt; events to events.jsonl, stderr
           # appended to agent.log. The key goes in only for openrouter/.
           run_agent() {
@@ -235,6 +273,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEW_SCOPE: ${{ steps.prev.outputs.scope }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail

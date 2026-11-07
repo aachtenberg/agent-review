@@ -26,7 +26,7 @@ jobs:
         && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
         && startsWith(github.event.comment.body, '/review'))
     uses: aachtenberg/agent-review/.github/workflows/review.yml@v1
-    # Public repo: GitHub-hosted runner, DeepSeek V4.1 Flash via OpenRouter.
+    # Public repo: GitHub-hosted runner, GLM 5.3 Flash via OpenRouter.
     with:
       runner: ubuntu-latest
     # Private repo: our self-hosted runner, with the local Ollama as fallback.
