@@ -2,7 +2,7 @@
 
 An AI reviewer for pull requests, run in GitHub Actions. It reads the change, follows it to the code that uses it, and comments with what breaks and how to fix it.
 
-[OpenCode](https://github.com/anomalyco/opencode) does the work, with whichever model you pick. The default, DeepSeek V4.1 Flash on [OpenRouter](https://openrouter.ai), costs about **$0.001–0.02 a review**. A local Ollama model works too.
+[OpenCode](https://github.com/anomalyco/opencode) does the work, with whichever model you pick. The default, GLM 5.3 Flash on [OpenRouter](https://openrouter.ai), costs about **$0.03–0.25 a review**, more for a big PR. A local Ollama model works too.
 
 A review looks like this:
 
@@ -14,6 +14,8 @@ A review looks like this:
 >    - **Fix:** revert the selector to `app.kubernetes.io/name: postgrest`.
 
 If it finds nothing, it says ✅ `No issues found.` and adds one `Checked:` line on what it read.
+
+Low findings are folded below the others: they're real, but they don't block a merge. When only low ones are left, the review starts with ✅ **Nothing blocking**, so you know another round isn't needed.
 
 ## How it works
 
@@ -51,12 +53,16 @@ The agent only reads. It can't change the code, push or comment. The workflow po
 - **When asked:** when the repo owner or an org member comments `/review`. That comment gets 👀 when the run starts, then 🚀 when the review is posted, or 👎 if the run failed. A new `/review` cancels a run still going, and the cancelled run posts nothing.
 - **Never:** for PRs from forks, or for `/review` from anyone else.
 
+**Re-reviews look only at what's new.** Once a PR has a review, the next one checks that review's high and medium findings and reviews only the commits added since. Earlier low findings aren't repeated. The footer says `re-review since <commit>`.
+
+It reviews the whole PR instead when the PR was rebased, when a merge came in, when there are no new commits, or when the last review was written by the fallback model. Comment `/review full` to review the whole PR on purpose.
+
 ## Settings
 
 | Input | Default | What it does |
 |---|---|---|
 | `runner` | `ubuntu-latest` | The runner to use (`runs-on`) |
-| `model` | `openrouter/deepseek/deepseek-v4.1-flash` | Any [OpenCode `provider/model`](https://opencode.ai/docs/models/) |
+| `model` | `openrouter/z-ai/glm-5.3-flash` | Any [OpenCode `provider/model`](https://opencode.ai/docs/models/) |
 | `fallback_model` | none | Tried once if the first model fails or has no key |
 | `ollama_base_url` | none | Your Ollama endpoint for `ollama/` models, e.g. `http://host:11434/v1` |
 | `config_ref` | `v1` | The version of this repo to read the prompt and config from. Keep it the same as the `@ref` in `uses:` |
@@ -69,13 +75,13 @@ Secret: `OPENROUTER_API_KEY`, needed only for `openrouter/` models.
 
 | Heading | Meaning | Job |
 |---|---|---|
-| **🔎 Agent review** | Up to 5 findings, worst first, each with **Breaks**, **Fix**, and sometimes **Affected**. Or ✅ `No issues found.` | passes |
+| **🔎 Agent review** | Up to 5 findings, worst first, each with **Breaks**, **Fix**, and sometimes **Affected**, with low ones folded. Or ✅ `No issues found.` | passes |
 | **⚠️ No review** | The agent finished but didn't write a review. Whatever it did write is folded away. | fails |
 | **⚠️ Agent review failed** | The agent crashed, ran out of time, or couldn't start (for example, no key and no fallback). | fails |
 
 To retry, comment `/review`.
 
-The model writes the findings. `render.py` adds the 🔴 high / 🟠 medium / 🟡 low icons, the count line, and links from each `file:line` to the PR's code, so every model's review looks the same. The footer shows the model, the commit, tool calls, tokens, cost, time, and a link to the run.
+The model writes the findings. `render.py` adds the 🔴 high / 🟠 medium / 🟡 low icons, the count line, and links from each `file:line` to the PR's code, so every model's review looks the same. The footer shows the model, the commit, tool calls, tokens, cost, time, whether it was a re-review, and a link to the run.
 
 ## Tell it about your repo
 
@@ -159,6 +165,8 @@ Using `@v1` means trusting whoever can move that tag, which is this repo's owner
 | `review/prompt.md` | What the agent is told to do, and the review format |
 | `review/opencode.json` | Models and permissions |
 | `review/git-ro` | The read-only git wrapper |
+| `review/scope-full.md`, `review/scope-rereview.md` | How a full review and a re-review start, put into the prompt |
+| `review/previous.py` | Finds the last review, and decides between a re-review and a full one |
 | `review/render.py` | Turns the agent's output into the comment |
 | `image/` | The container image, built by `.github/workflows/image.yml` |
 | `examples/agent-review.yml` | The workflow to copy into your repo |

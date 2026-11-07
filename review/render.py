@@ -9,7 +9,13 @@ usually the model thinking aloud rather than a review. A block that is a
 verbatim copy of one of prompt.md's examples (a model quoting its prompt) is
 not a review either, and is skipped. The footer reports
 the model, commit, tool calls, tokens/cost (when the provider reports them)
-and duration, so reviews from different models can be compared.
+and duration, so reviews from different models can be compared, plus what
+the review covered (REVIEW_SCOPE, from previous.py) and a hidden marker with
+the full head SHA, which previous.py reads to build the next re-review on.
+
+Low findings are folded into <details> below the high and medium ones: they
+are real but don't block a merge. With only low findings the count line says
+so ("Nothing blocking"), so the author knows another round isn't needed.
 
 AGENT_RC is the agent's exit code. When it is not 0 (or unset: the agent
 never ran), the comment says the review failed. When it is 0 but there is no
@@ -34,37 +40,70 @@ def decorate(review):
     """Severity icons, file:line links to the PR head, and a count line.
 
     Only presentation: the model writes the structure (prompt.md), this makes
-    it look the same on every run. Lines that are not findings are untouched.
+    it look the same on every run. High and medium findings come first, then
+    the low ones folded under <details>, numbered in that order. Lines that
+    are not findings stay with the finding above them.
     """
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     head = os.environ.get("HEAD_SHA", "")
     counts = {"high": 0, "medium": 0, "low": 0}
-    out = []
+    findings = []  # [severity, list prefix, [first line without its prefix, more lines...]]
+    preamble = []
     for line in review.split("\n"):
         m = FINDING.match(line)
-        if m:
-            sev = m.group(2).lower()
-            counts[sev] += 1
-            rest = line[m.end():]
-            if repo and head:
-                def link(loc):
-                    path, a, b = loc.group(1), loc.group(2), loc.group(3)
-                    if path.startswith("/") or ".." in path.split("/"):
-                        return loc.group(0)
-                    anchor = f"#L{a}-L{b}" if b else f"#L{a}"
-                    return f"[{loc.group(0)}](https://github.com/{repo}/blob/{head}/{quote(path)}{anchor})"
-                rest = LOCATION.sub(link, rest, count=1)
-            line = f"{m.group(1)}{SEVERITY[sev]} · {rest}"
-        out.append(line)
+        if not m:
+            (findings[-1][2] if findings else preamble).append(line)
+            continue
+        sev = m.group(2).lower()
+        counts[sev] += 1
+        rest = line[m.end():]
+        if repo and head:
+            def link(loc):
+                path, a, b = loc.group(1), loc.group(2), loc.group(3)
+                if path.startswith("/") or ".." in path.split("/"):
+                    return loc.group(0)
+                anchor = f"#L{a}-L{b}" if b else f"#L{a}"
+                return f"[{loc.group(0)}](https://github.com/{repo}/blob/{head}/{quote(path)}{anchor})"
+            rest = LOCATION.sub(link, rest, count=1)
+        findings.append([sev, m.group(1), [rest]])
     n = sum(counts.values())
-    body = "\n".join(out)
-    if n:
+    pre = "\n".join(preamble).strip()
+    if not n:
+        if pre.startswith("No issues found"):
+            # Keep "Checked:" on its own line; Markdown joins adjacent lines.
+            return "✅ " + pre.replace("\n", "\n\n", 1)
+        return pre
+
+    def plural(k, word="finding"):
+        return f"{k} {word}{'s' if k != 1 else ''}"
+
+    blocking = [f for f in findings if f[0] != "low"]
+    lows = [f for f in findings if f[0] == "low"]
+    if blocking:
         parts = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
-        return f"**{n} finding{'s' if n != 1 else ''}**: {parts}\n\n{body}"
-    if body.startswith("No issues found"):
-        # Keep "Checked:" on its own line; Markdown joins adjacent lines.
-        return "✅ " + body.replace("\n", "\n\n", 1)
-    return body
+        out = [f"**{plural(n)}**: {parts}"]
+    else:
+        out = [f"✅ **Nothing blocking**: {plural(n, 'low finding')}, folded below."]
+    if pre:
+        out.append(pre)
+    num = 0
+    def show(f):
+        nonlocal num
+        num += 1
+        sev, prefix, lines = f
+        # Renumber a numbered list; a bulleted one keeps its bullet, so its
+        # sub-bullets stay indented under it.
+        prefix = f"{num}. " if prefix.strip()[0].isdigit() else prefix.lstrip()
+        first = f"{prefix}{SEVERITY[sev]} · {lines[0]}"
+        more = "\n".join(lines[1:]).strip("\n")
+        return first + ("\n" + more if more else "")
+    out += [show(f) for f in blocking]
+    if lows:
+        summary = plural(len(lows), "low finding") + (", not blocking" if blocking else "")
+        out.append(f"<details><summary>{summary}</summary>")
+        out += [show(f) for f in lows]
+        out.append("</details>")
+    return "\n\n".join(out)
 
 
 events = []
@@ -197,7 +236,12 @@ elif not marked:
 else:
     print("### 🔎 Agent review\n")
     print(decorate(review))
+scope = os.environ.get("REVIEW_SCOPE", "").strip()
 print("\n---")
 print(f"<sub>OpenCode · `{model}`{' (fallback: ' + fell_back + ')' if fell_back else ''} · `{sha}` · {len(tools)} tool calls ({tool_summary}) · "
-      f"{usage} · {elapsed}s · [run]({run_url}) · "
-      f"comment `/review` to re-run</sub>")
+      f"{usage} · {elapsed}s · {scope + ' · ' if scope else ''}[run]({run_url}) · "
+      f"comment `/review` to re-run, `/review full` for the whole PR</sub>")
+# Read by previous.py: the commit this review covers, for the next re-review.
+full_sha = os.environ.get("HEAD_SHA", "")
+if re.fullmatch(r"[0-9a-f]{40}", full_sha):
+    print(f"<!-- agent-review head={full_sha} -->")

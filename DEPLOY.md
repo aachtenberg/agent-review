@@ -94,6 +94,7 @@ Keep `opencode-linux-x64-baseline` in `image/package.json`. `ubuntu-itx-01`'s CP
 | ⚠️ **Agent review failed** … no `OPENROUTER_API_KEY` | Run `./deploy/add-repo.sh <repo>`. It asks for the key. |
 | ⚠️ **Agent review failed** … time limit | The model was slow or the local GPU was busy. Try again: comment `/review` if you can, or close and reopen the PR. |
 | ⚠️ **No review** | The model didn't finish its answer. Try again the same way. |
+| A review only looked at the latest commits | That's a re-review, on purpose: it checks the last review's findings and what changed since. Comment `/review full` to review the whole PR. |
 | A script stops with ✗ | Read the line after ✗. It says what to do. |
 
 Still stuck? Open the run link in the review comment's footer, or under the PR's **Checks** tab, and send it to the owner.
