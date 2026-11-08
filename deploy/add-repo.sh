@@ -151,7 +151,7 @@ if gh api "repos/$R/contents/$WF?ref=$base" --jq .content 2>/dev/null | base64 -
   # Already there. It must grant everything the reviewer on main asks for,
   # or GitHub won't start the reviewer once main is released to v1.
   missing=$(python3 -I "$HERE/deploy/perms.py" "$HERE/.github/workflows/review.yml" "$tmp/cur.yml") \
-    || die "$WF in $R has no top-level permissions: block, so this script can't check it. Make it match examples/agent-review.yml by hand."
+    || die "Can't check the permissions in $R's $WF (the line above says why). Make them match examples/agent-review.yml by hand."
   if [ -z "$missing" ]; then
     ok "already on $base, with the permissions it needs"
     step "Done"
@@ -164,7 +164,8 @@ if gh api "repos/$R/contents/$WF?ref=$base" --jq .content 2>/dev/null | base64 -
     step "Dry run done. Nothing was changed."
     exit 0
   fi
-  python3 -I "$HERE/deploy/perms.py" "$HERE/.github/workflows/review.yml" "$tmp/cur.yml" --fix > "$tmp/wf.yml"
+  python3 -I "$HERE/deploy/perms.py" "$HERE/.github/workflows/review.yml" "$tmp/cur.yml" --fix > "$tmp/wf.yml" \
+    || die "Can't add that to $R's $WF (the line above says why). Add it by hand, as in examples/agent-review.yml."
   blob=$(gh api "repos/$R/contents/$WF?ref=$base" --jq .sha)
   pr=$(open_pr "$UPDATE_BRANCH" "$tmp/wf.yml" "Update the agent reviewer's permissions" \
     "Adds \`$(tr '\n' ' ' <<<"$missing" | sed 's/ $//')\` to \`$WF\`. The next version of [agent-review](https://github.com/$OWNER/agent-review) asks for it, to set an \`agent-review\` status on each PR. GitHub won't run the reviewer for a workflow that grants less than it asks for, so merge this before that version is released." \
