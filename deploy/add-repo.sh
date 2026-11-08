@@ -8,7 +8,9 @@
 #   1. The OpenRouter key: asks you to paste it if the repo doesn't have it.
 #   2. Private repos only: a runner for the repo on ubuntu-itx-01, over ssh.
 #      It asks for your sudo password there.
-#   3. The workflow: opens a PR that adds it. You merge the PR.
+#   3. The workflow: opens a PR that adds it. You merge the PR. If it's
+#      there but doesn't grant a permission the reviewer on main asks for,
+#      the PR adds that instead.
 set -euo pipefail
 
 OWNER=aachtenberg
@@ -16,6 +18,7 @@ RUNNER_HOST=ubuntu-itx-01
 LABEL=ubuntu-itx-01
 RUNNER_VERSION=2.338.2   # used only if the host has no runner download to copy
 BRANCH=add-agent-review
+UPDATE_BRANCH=agent-review-permissions
 WF=.github/workflows/agent-review.yml
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -127,15 +130,51 @@ if [ "$vis" != PUBLIC ]; then
 fi
 
 # --- 3. The workflow ---------------------------------------------------------
+# open_pr BRANCH FILE TITLE BODY [BLOB]: a PR in $R that writes FILE to $WF.
+# BLOB is the sha of the $WF it replaces; without it, the PR can only add
+# $WF, and GitHub refuses it if $WF is already there. Prints the PR's URL.
+open_pr() {
+  local branch=$1 file=$2 title=$3 body=$4 blob=${5:-} sha replace=()
+  gh api "repos/$R/branches/$branch" >/dev/null 2>&1 \
+    && die "$R already has a branch named $branch. Merge or close its PR, delete the branch, and run this again."
+  sha=$(gh api "repos/$R/git/ref/heads/$base" --jq .object.sha)
+  gh api -X POST "repos/$R/git/refs" -f ref="refs/heads/$branch" -f sha="$sha" >/dev/null
+  [ -z "$blob" ] || replace=(-f sha="$blob")
+  gh api -X PUT "repos/$R/contents/$WF" -f branch="$branch" -f message="$title (aachtenberg/agent-review)" \
+    -f content="$(base64 < "$file" | tr -d '\n')" "${replace[@]}" >/dev/null
+  gh pr create -R "$R" --base "$base" --head "$branch" --title "$title" --body "$body"
+}
+
 step "Workflow"
-if gh api "repos/$R/contents/$WF?ref=$base" >/dev/null 2>&1; then
-  ok "already on $base"
-  step "Done"
-  echo "    $R is set up. Every new PR gets a review; comment /review on a PR to run one by hand."
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+if gh api "repos/$R/contents/$WF?ref=$base" --jq .content 2>/dev/null | base64 -d > "$tmp/cur.yml" 2>/dev/null; then
+  # Already there. It must grant everything the reviewer on main asks for,
+  # or GitHub won't start the reviewer once main is released to v1.
+  missing=$(python3 -I "$HERE/deploy/perms.py" "$HERE/.github/workflows/review.yml" "$tmp/cur.yml") \
+    || die "$WF in $R has no top-level permissions: block, so this script can't check it. Make it match examples/agent-review.yml by hand."
+  if [ -z "$missing" ]; then
+    ok "already on $base, with the permissions it needs"
+    step "Done"
+    echo "    $R is set up. Every new PR gets a review; comment /review on a PR to run one by hand."
+    exit 0
+  fi
+  todo "it's on $base, but doesn't grant: $(tr '\n' ' ' <<<"$missing")"
+  if [ "$dry" = 1 ]; then
+    todo "would open a PR in $R that adds that to $WF"
+    step "Dry run done. Nothing was changed."
+    exit 0
+  fi
+  python3 -I "$HERE/deploy/perms.py" "$HERE/.github/workflows/review.yml" "$tmp/cur.yml" --fix > "$tmp/wf.yml"
+  blob=$(gh api "repos/$R/contents/$WF?ref=$base" --jq .sha)
+  pr=$(open_pr "$UPDATE_BRANCH" "$tmp/wf.yml" "Update the agent reviewer's permissions" \
+    "Adds \`$(tr '\n' ' ' <<<"$missing" | sed 's/ $//')\` to \`$WF\`. The next version of [agent-review](https://github.com/$OWNER/agent-review) asks for it, to set an \`agent-review\` status on each PR. GitHub won't run the reviewer for a workflow that grants less than it asks for, so merge this before that version is released." \
+    "$blob")
+  ok "opened $pr"
+  step "Done. One step left: merge the PR."
+  echo "    $pr"
   exit 0
 fi
 
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [ "$vis" = PUBLIC ]; then
   cp "$HERE/examples/agent-review.yml" "$tmp/wf.yml"
 else
@@ -160,20 +199,13 @@ fi
 
 if [ "$dry" = 1 ]; then
   todo "would open a PR in $R that adds $WF:"
-  sed -n '/uses:/,$p' "$tmp/wf.yml" | sed 's/^/        /'
+  sed -n '/^ *uses:/,$p' "$tmp/wf.yml" | sed 's/^/        /'
   step "Dry run done. Nothing was changed."
   exit 0
 fi
 
-gh api "repos/$R/branches/$BRANCH" >/dev/null 2>&1 \
-  && die "$R already has a branch named $BRANCH. Merge or close its PR, delete the branch, and run this again."
-sha=$(gh api "repos/$R/git/ref/heads/$base" --jq .object.sha)
-gh api -X POST "repos/$R/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$sha" >/dev/null
-gh api -X PUT "repos/$R/contents/$WF" -f branch="$BRANCH" \
-  -f message="Add the agent reviewer (aachtenberg/agent-review)" \
-  -f content="$(base64 < "$tmp/wf.yml" | tr -d '\n')" >/dev/null
-pr=$(gh pr create -R "$R" --base "$base" --head "$BRANCH" --title "Add the agent reviewer" \
-  --body "Adds \`$WF\` from [agent-review](https://github.com/$OWNER/agent-review). After this merges, every new PR gets a review comment. This PR can't review itself, because GitHub runs the workflow from \`$base\`.")
+pr=$(open_pr "$BRANCH" "$tmp/wf.yml" "Add the agent reviewer" \
+  "Adds \`$WF\` from [agent-review](https://github.com/$OWNER/agent-review). After this merges, every new PR gets a review comment. This PR can't review itself, because GitHub runs the workflow from \`$base\`.")
 ok "opened $pr"
 
 step "Done. One step left: merge the PR."

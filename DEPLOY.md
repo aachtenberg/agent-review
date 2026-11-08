@@ -49,6 +49,8 @@ It checks the repo, then does only what's missing:
 
 To check it works, open a small PR in the repo, like a typo fix. A review comment shows up on it within a few minutes.
 
+**Already set up?** Running it again checks the repo. If the workflow is missing a permission the reviewer on `main` asks for, it opens a PR that adds it. Merge that PR the same way.
+
 ## Send a change out to every repo
 
 Every repo uses the version of agent-review tagged `v1`. "Releasing" means moving that tag to the latest `main`.
@@ -59,7 +61,9 @@ Every repo uses the version of agent-review tagged `v1`. "Releasing" means movin
    ```sh
    ./deploy/release.sh
    ```
-   It shows what's going out and checks that the review image runs on `ubuntu-itx-01`. Then it asks `Move v1 …? [y/N]`. Type `y`.
+   It shows what's going out, checks that the review image runs on `ubuntu-itx-01`, and checks that every repo's workflow grants the permissions the new version asks for. Then it asks `Move v1 …? [y/N]`. Type `y`.
+
+   If it stops with a list of repos whose workflows don't grant something, run `./deploy/add-repo.sh <repo>` for each one and merge the PRs it opens, then run `release.sh` again. GitHub won't run the reviewer from a workflow that grants less than the reviewer asks for, so releasing first would stop those repos' reviews.
 4. **Write down the undo command it prints,** like `./deploy/release.sh 30bc83b`.
 
 Every repo uses the new version on its next review. There's nothing to restart.
@@ -94,6 +98,7 @@ Keep `opencode-linux-x64-baseline` in `image/package.json`. `ubuntu-itx-01`'s CP
 | ⚠️ **Agent review failed** … no `OPENROUTER_API_KEY` | Run `./deploy/add-repo.sh <repo>`. It asks for the key. |
 | ⚠️ **Agent review failed** … time limit | The model was slow or the local GPU was busy. Try again: comment `/review` if you can, or close and reopen the PR. |
 | ⚠️ **No review** | The model didn't finish its answer. Try again the same way. |
+| The PR's checks show a cancelled **Agent Review** | A newer review replaced it, usually a `/review` comment. Look at the **agent-review** status under it: that's the latest result. A `/review` run's own check shows on `main`, not on the PR. |
 | A review only looked at the latest commits | That's a re-review, on purpose: it checks the last review's findings and what changed since. Comment `/review full` to review the whole PR. |
 | A script stops with ✗ | Read the line after ✗. It says what to do. |
 
