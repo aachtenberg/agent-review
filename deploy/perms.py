@@ -73,7 +73,7 @@ def main():
                  if re.fullmatch(r"    uses:\s*\S*\.github/workflows/review\.yml(@\S*)?\s*(#.*)?", l)), None)
     if uses is None:
         cant("no job that uses: review.yml")
-    keys = [i for i, l in enumerate(lines) if re.match(r"(  )?[A-Za-z0-9_-]+:", l)]
+    keys = [i for i, l in enumerate(lines) if re.match(r"""(  )?([A-Za-z0-9_-]+|"[^"]*"|'[^']*'):""", l)]
     lo = max((i for i in keys if i < uses), default=0)
     hi = min((i for i in keys if i > uses), default=len(lines))
     found = find(lines, 4, lo, hi) or find(lines, 0)
