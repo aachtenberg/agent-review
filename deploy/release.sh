@@ -4,12 +4,15 @@
 # See what it would do first:                   add --dry-run
 #
 # Every repo uses agent-review at the v1 tag, so a release just moves v1.
-# Before moving it, this shows what's changing and checks that the review
-# image runs on ubuntu-itx-01 (its CPU has no AVX2), then asks you to confirm.
+# Before moving it, this shows what's changing, checks that the review image
+# runs on ubuntu-itx-01 (its CPU has no AVX2) and that every repo's workflow
+# grants the permissions the new version asks for, then asks you to confirm.
 # Every repo picks up the change on its next review.
 set -euo pipefail
 
 RUNNER_HOST=ubuntu-itx-01
+OWNER=aachtenberg
+WF=.github/workflows/agent-review.yml
 cd "$(dirname "$0")/.."
 
 die() { printf '\n✗ %s\n' "$*" >&2; exit 1; }
@@ -52,6 +55,32 @@ case "$img" in
     echo "  ✓ it runs" ;;
   *) echo "(This version doesn't use the prebuilt image, so there's no image to check.)" ;;
 esac
+
+# GitHub won't start the reviewer for a repo whose workflow grants less than
+# the reviewer's job asks for, so a release that asks for more would stop
+# those repos' reviews. add-repo.sh opens the PR that fixes a repo.
+echo
+echo "Checking each repo's workflow grants what this version asks for..."
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+git show "$new:.github/workflows/review.yml" > "$tmp/review.yml"
+gh repo list "$OWNER" -L 500 --no-archived --source --json name --jq '.[].name' > "$tmp/repos" \
+  || die "Couldn't list $OWNER's repos. Check: gh auth status. Nothing was changed."
+short="" checked=0
+while read -r name; do
+  if ! gh api "repos/$OWNER/$name/contents/$WF" --jq .content > "$tmp/b64" 2> "$tmp/err"; then
+    grep -q 'HTTP 404' "$tmp/err" && continue  # no reviewer in this repo
+    die "Couldn't read $name's workflow: $(cat "$tmp/err"). Run this again. Nothing was changed."
+  fi
+  base64 -d < "$tmp/b64" > "$tmp/caller.yml"
+  grep -q 'agent-review/.github/workflows/review.yml@v1' "$tmp/caller.yml" || continue
+  checked=$((checked + 1))
+  miss=$(python3 -I deploy/perms.py "$tmp/review.yml" "$tmp/caller.yml" 2>&1) || true
+  [ -z "$miss" ] || short+="    $name: $(tr '\n' ' ' <<<"$miss")"$'\n'
+done < "$tmp/repos"
+[ "$checked" -gt 0 ] || die "Found no repo that uses v1, which can't be right. Nothing was changed."
+[ -z "$short" ] || die "These repos' workflows don't grant everything this version asks for, so their reviews would stop:
+$short  For each one, run ./deploy/add-repo.sh <repo> and merge the PR it opens. Then release. Nothing was changed."
+echo "  ✓ all $checked repos on v1 do"
 
 if [ "$dry" = 1 ]; then
   echo

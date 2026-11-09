@@ -12,6 +12,9 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  # For the agent-review status on the PR's head commit. Without it GitHub
+  # won't start the reviewer, which asks for it.
+  statuses: write
 
 jobs:
   review:

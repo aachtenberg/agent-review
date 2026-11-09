@@ -31,7 +31,7 @@ flowchart TD
     E -- "failed, and a fallback<br/>model is set" --> F["Retry once<br/>with the fallback"]
     F --> R
     E -- finished --> R["render.py builds<br/>the comment"]
-    R --> P["Comment on the PR"]
+    R --> P["Comment on the PR, and set<br/>its agent-review status"]
 ```
 
 The agent only reads. It can't change the code, push or comment. The workflow posts the comment after the agent's container is gone.
@@ -50,8 +50,12 @@ The agent only reads. It can't change the code, push or comment. The workflow po
 ## When it runs
 
 - **By itself:** when a PR is opened, reopened, or marked ready for review. Drafts are skipped.
-- **When asked:** when the repo owner or an org member comments `/review`. That comment gets 👀 when the run starts, then 🚀 when the review is posted, or 👎 if the run failed. A new `/review` cancels a run still going, and the cancelled run posts nothing.
+- **When asked:** when the repo owner or an org member comments `/review`. That comment gets 👀 when the run starts, then 🚀 when the review is posted, or 👎 if the run failed. A new `/review` cancels a run still going, and the cancelled run posts no comment.
 - **Never:** for PRs from forks, or for `/review` from anyone else.
+
+**The result shows on the PR as an `agent-review` status** on its latest commit: pending while it reviews, ✅ once the review is posted, with the finding counts (`2 findings: 1 high, 1 low`), ❌ if the run failed. Check that, not the run's own check. GitHub attaches a `/review` run's check to the default branch's latest commit, so it never shows on the PR, and a run replaced by a newer `/review` leaves a cancelled check behind.
+
+You can require the `agent-review` status in branch protection. It's green whenever a review was posted, findings or not, so it means "reviewed", not "nothing found". Pushing doesn't start a review, so after a push it stays on the old commit until you comment `/review`.
 
 **Re-reviews look only at what's new.** Once a PR has a review, the next one checks that review's high and medium findings and reviews only the commits added since. Earlier low findings aren't repeated. The footer says `re-review since <commit>`.
 
@@ -155,7 +159,7 @@ To update: change `image/`, let [`image.yml`](.github/workflows/image.yml) build
 
 `v1` is a tag that moves: it's moved to each tested change on `main`, and repos that use `@v1` get the change on their next run. To stay on one version, set both `uses: …@<commit-sha>` and `config_ref: <commit-sha>`.
 
-Using `@v1` means trusting whoever can move that tag, which is this repo's owner. Whatever `v1` points to, including the image it pins, runs with your PR code, your `OPENROUTER_API_KEY`, and a `GITHUB_TOKEN` that can read your repo and write PR comments. That's fine for the owner's own repos. If you're anyone else, pin a commit SHA you've read, and update it on purpose.
+Using `@v1` means trusting whoever can move that tag, which is this repo's owner. Whatever `v1` points to, including the image it pins, runs with your PR code, your `OPENROUTER_API_KEY`, and a `GITHUB_TOKEN` that can read your repo and write PR comments and commit statuses. That's fine for the owner's own repos. If you're anyone else, pin a commit SHA you've read, and update it on purpose.
 
 ## Files
 
@@ -171,7 +175,7 @@ Using `@v1` means trusting whoever can move that tag, which is this repo's owner
 | `image/` | The container image, built by `.github/workflows/image.yml` |
 | `examples/agent-review.yml` | The workflow to copy into your repo |
 | `DEPLOY.md` | The deploy guide |
-| `deploy/` | Scripts: `add-repo.sh`, `release.sh`, `list-repos.sh` |
+| `deploy/` | Scripts: `add-repo.sh`, `release.sh`, `list-repos.sh`, and `perms.py`, which checks a repo's workflow grants what the reviewer asks for |
 | `.github/workflows/agent-review.yml` | This repo reviewing its own PRs |
 
 ## License

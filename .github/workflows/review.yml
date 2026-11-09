@@ -20,6 +20,16 @@ name: Agent Review (reusable)
 # (review/previous.py decides; review/scope-rereview.md says how).
 # `/review full` reviews the whole PR again.
 #
+# Status: each run sets an `agent-review` commit status on the PR's head
+# commit: pending while it runs, then success (the review was posted; the
+# description gives the finding counts), failure (no review) or error
+# (cancelled, e.g. replaced by a newer /review). GitHub attaches a /review
+# run's own check to the default branch's latest commit, not to the PR, so
+# the status is what shows the result on the PR, and what branch protection
+# can require. It needs `statuses: write`, which every caller must grant
+# too: GitHub won't start this workflow for a caller that grants less than
+# the job asks for. deploy/release.sh checks every caller before moving v1.
+#
 # Isolation: the PR's code is untrusted input to an agent that runs commands.
 #   - Same-repo PRs only (fork PRs never run), /review only from the owner
 #     or an org member (author_association OWNER or MEMBER).
@@ -73,6 +83,7 @@ env:
   MODEL: ${{ inputs.model }}
   FALLBACK_MODEL: ${{ inputs.fallback_model }}
   OLLAMA_BASE_URL: ${{ inputs.ollama_base_url }}
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
   agent-review:
@@ -100,6 +111,8 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      # The agent-review status on the PR's head commit.
+      statuses: write
     # Two attempts of at most 15 minutes each, plus setup.
     timeout-minutes: 40
     steps:
@@ -126,6 +139,15 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = issue_comment ]; then
             gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes >/dev/null || true
           fi
+
+      - name: Set the status to pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" -f context=agent-review \
+            -f state=pending -f description=Reviewing -f target_url="$RUN_URL" >/dev/null \
+            || echo "::warning::couldn't set the agent-review status on ${HEAD_SHA:0:7}"
 
       - name: Check out the reviewer (aachtenberg/agent-review)
         uses: actions/checkout@v4
@@ -267,6 +289,7 @@ jobs:
           tail -30 "$RUNNER_TEMP/agent.log" || true
 
       - name: Post the review
+        id: post
         # Not when cancelled: a run superseded by a newer /review posts nothing.
         if: ${{ !cancelled() && steps.pr.outputs.number }}
         env:
@@ -274,11 +297,13 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           REVIEW_SCOPE: ${{ steps.prev.outputs.scope }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 -I reviewer/review/render.py "$RUNNER_TEMP/events.jsonl" > "$RUNNER_TEMP/comment.md"
-          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@"$RUNNER_TEMP/comment.md" --jq .html_url
+          SUMMARY_OUT="$RUNNER_TEMP/summary.txt" \
+            python3 -I reviewer/review/render.py "$RUNNER_TEMP/events.jsonl" > "$RUNNER_TEMP/comment.md"
+          url=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@"$RUNNER_TEMP/comment.md" --jq .html_url)
+          echo "$url"
+          echo "comment_url=$url" >> "$GITHUB_OUTPUT"
           # AGENT_RC is unset when the Review step failed before the agent ran.
           if [ "${AGENT_RC:-}" != 0 ]; then
             echo "::error::the agent did not finish (exit ${AGENT_RC:-not run}); a failure comment was posted"
@@ -304,3 +329,27 @@ jobs:
           if [ "$JOB_STATUS" = success ]; then reaction=rocket; else reaction=-1; fi
           gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
             -f content="$reaction" >/dev/null || true
+
+      # The result on the PR's head commit. Success and failure link to the
+      # comment, and render.py wrote the description. A cancelled run sets
+      # error. When a newer /review replaced it, that run's own result comes
+      # minutes later and is the last word.
+      - name: Set the status to the result
+        if: always() && steps.pr.outputs.head_sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          JOB_STATUS: ${{ job.status }}
+          COMMENT_URL: ${{ steps.post.outputs.comment_url }}
+        run: |
+          desc=$(cat "$RUNNER_TEMP/summary.txt" 2>/dev/null || true)
+          url=${COMMENT_URL:-$RUN_URL}
+          case "$JOB_STATUS" in
+            success) state=success ;;
+            cancelled) state=error desc="Cancelled: replaced by a newer review, or stopped" url=$RUN_URL ;;
+            *) state=failure
+               [ -n "$COMMENT_URL" ] || desc="The run failed before posting a review" ;;
+          esac
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" -f context=agent-review \
+            -f state="$state" -f description="${desc:-Review posted}" -f target_url="$url" >/dev/null \
+            || echo "::warning::couldn't set the agent-review status on ${HEAD_SHA:0:7}"

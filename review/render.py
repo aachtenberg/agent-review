@@ -22,6 +22,10 @@ never ran), the comment says the review failed. When it is 0 but there is no
 review block, the comment says there is no review. Either way any output is
 folded away, so half-finished reasoning is never posted as a review, and the
 heading starts with ⚠️, which the workflow treats as a failed run.
+
+With SUMMARY_OUT set, a one-line summary for the workflow's commit status
+is written there: the count line ("2 findings: 1 high, 1 low"), or why
+there is no review.
 """
 import json
 import os
@@ -43,6 +47,8 @@ def decorate(review):
     it look the same on every run. High and medium findings come first, then
     the low ones folded under <details>, numbered in that order. Lines that
     are not findings stay with the finding above them.
+
+    Returns the decorated review and the count line in plain text.
     """
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     head = os.environ.get("HEAD_SHA", "")
@@ -71,8 +77,8 @@ def decorate(review):
     if not n:
         if pre.startswith("No issues found"):
             # Keep "Checked:" on its own line; Markdown joins adjacent lines.
-            return "✅ " + pre.replace("\n", "\n\n", 1)
-        return pre
+            return "✅ " + pre.replace("\n", "\n\n", 1), "No issues found"
+        return pre, "No findings"
 
     def plural(k, word="finding"):
         return f"{k} {word}{'s' if k != 1 else ''}"
@@ -82,8 +88,10 @@ def decorate(review):
     if blocking:
         parts = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
         out = [f"**{plural(n)}**: {parts}"]
+        status = f"{plural(n)}: {parts}"
     else:
         out = [f"✅ **Nothing blocking**: {plural(n, 'low finding')}, folded below."]
+        status = f"Nothing blocking: {plural(n, 'low finding')}"
     if pre:
         out.append(pre)
     num = 0
@@ -103,7 +111,7 @@ def decorate(review):
         out.append(f"<details><summary>{summary}</summary>")
         out += [show(f) for f in lows]
         out.append("</details>")
-    return "\n\n".join(out)
+    return "\n\n".join(out), status
 
 
 events = []
@@ -210,6 +218,7 @@ if failed:
         why = "the agent hit its time limit"
     else:
         why = f"the agent exited with code {agent_rc} before finishing"
+    status = f"Review failed: {why}"
     print("### ⚠️ Agent review failed\n")
     print(f"No review: {why}. The [run log]({run_url}) has the details. "
           "Comment `/review` to retry.")
@@ -227,6 +236,7 @@ elif not marked:
     # treats as a failed run (👎 on /review).
     print("### ⚠️ No review\n")
     what = "without writing a review" if texts else "without writing anything"
+    status = f"No review: the agent finished {what}"
     print(f"The agent finished {what}. The [run log]({run_url}) has the "
           "details. Comment `/review` to retry.")
     if texts:
@@ -234,8 +244,9 @@ elif not marked:
         print(review)
         print("\n</details>")
 else:
+    body, status = decorate(review)
     print("### 🔎 Agent review\n")
-    print(decorate(review))
+    print(body)
 scope = os.environ.get("REVIEW_SCOPE", "").strip()
 print("\n---")
 print(f"<sub>OpenCode · `{model}`{' (fallback: ' + fell_back + ')' if fell_back else ''} · `{sha}` · {len(tools)} tool calls ({tool_summary}) · "
@@ -245,3 +256,9 @@ print(f"<sub>OpenCode · `{model}`{' (fallback: ' + fell_back + ')' if fell_back
 full_sha = os.environ.get("HEAD_SHA", "")
 if re.fullmatch(r"[0-9a-f]{40}", full_sha):
     print(f"<!-- agent-review head={full_sha} -->")
+
+# GitHub refuses a status description over 140 characters.
+summary_out = os.environ.get("SUMMARY_OUT")
+if summary_out:
+    with open(summary_out, "w", encoding="utf-8") as f:
+        f.write(status if len(status) <= 140 else status[:139] + "…")
