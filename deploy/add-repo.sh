@@ -108,11 +108,11 @@ if [ "$vis" != PUBLIC ]; then
   To start it, on $RUNNER_HOST run:
     sudo systemctl start actions.runner.$OWNER-$name.$RUNNER_HOST"
   elif [ "$dry" = 1 ]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" true 2>/dev/null \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" true 2>/dev/null \
       && ok "can ssh to $RUNNER_HOST" || todo "can't ssh to $RUNNER_HOST yet; ask the owner for access"
     todo "would install a runner in ~/actions-runner-$name on $RUNNER_HOST"
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" true 2>/dev/null \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" true 2>/dev/null \
       || die "Can't ssh to $RUNNER_HOST. Ask the owner for access, then run this again."
     token=$(gh api -X POST "repos/$R/actions/runners/registration-token" --jq .token)
     echo "    Installing. It will ask for your sudo password on $RUNNER_HOST."
