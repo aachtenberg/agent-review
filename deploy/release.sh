@@ -49,7 +49,7 @@ case "$img" in
   ghcr.io/aachtenberg/agent-review@sha256:*)
     echo
     echo "Checking the review image runs on $RUNNER_HOST..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$RUNNER_HOST" \
       "docker pull -q '$img' >/dev/null && docker run --rm '$img' opencode --version" \
       || die "The image didn't run on $RUNNER_HOST, so the private repos' reviews would fail. Nothing was changed."
     echo "  ✓ it runs" ;;
