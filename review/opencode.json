@@ -41,17 +41,6 @@
           }
         }
       }
-    },
-    "openrouter": {
-      "models": {
-        "z-ai/glm-5.3-flash": {
-          "options": {
-            "reasoning": {
-              "max_tokens": 6000
-            }
-          }
-        }
-      }
     }
   },
   "permission": {
