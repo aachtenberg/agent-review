@@ -87,7 +87,9 @@ Secret: `OPENROUTER_API_KEY`, needed only for `openrouter/` models.
 
 To retry, comment `/review`.
 
-**When the agent stops early.** A model sometimes ends its turn before the review: it says what it will look at next and makes no tool call, or writes nothing. The workflow then asks it once more, in the same session, to write the review from what it has read, and the footer says `asked again for the review`. A finished review that only lacks its markers is posted as it is. A run that still ends without a review keeps the agent's events as the `agent-review-events` artifact on the run for 14 days.
+**When the agent stops early.** A model sometimes ends its turn before the review: it says what it will look at next and makes no tool call, or writes nothing. The workflow then asks it once more, in the same session, to write the review from what it has read, and the footer says `asked again for the review`. A finished review that only lacks its markers is posted as it is. A run that still ends without a review keeps the agent's events as an artifact on the run for 14 days (`agent-review-events-1`; the number is the run attempt).
+
+**Reasoning is capped for the default model**, at 8,000 tokens a step, in [`review/opencode.json`](review/opencode.json). OpenCode stops a model's turn at 32,000 output tokens, reasoning included, and GLM sometimes reasoned all the way there and wrote nothing. Another `openrouter/` model can be given the same cap under `provider.openrouter.models`.
 
 The model writes the findings. `render.py` adds the 🔴 high / 🟠 medium / 🟡 low icons, the count line, and links from each `file:line` to the PR's code, so every model's review looks the same. The footer shows the model, the commit, tool calls, tokens, cost, time, whether it was a re-review, and a link to the run.
 

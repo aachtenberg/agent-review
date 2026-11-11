@@ -25,7 +25,7 @@ name: Agent Review (reusable)
 # then asked once more, in the same session, to write the review from what
 # it has read. If there is still none and a fallback is set, the fallback
 # reviews. A run that ends without a review keeps the agent's events as an
-# artifact (agent-review-events, 14 days), to tell a model that stopped from
+# artifact (agent-review-events-<attempt>, 14 days), to tell a model that stopped from
 # a stream that was cut.
 #
 # Status: each run sets an `agent-review` commit status on the PR's head
