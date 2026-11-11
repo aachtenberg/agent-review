@@ -1,0 +1,20 @@
+name: Tests
+# What render.py takes for a review, and the Review step's paths (asked
+# again, fallback, timeout), run with a stand-in for docker. No secrets.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -v
