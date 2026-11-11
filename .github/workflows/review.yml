@@ -100,6 +100,7 @@ jobs:
     # The caller applies the same guard; repeated here so a careless caller
     # cannot open the reviewer to forks or other commenters.
     if: >-
+      github.event_name == 'pull_request' ||
       (github.event_name == 'pull_request_target'
         && github.event.pull_request.draft == false
         && github.event.pull_request.head.repo.full_name == github.repository)

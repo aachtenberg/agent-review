@@ -1,0 +1,20 @@
+# TEMPORARY, never merged: runs this branch's review.yml on its own PR, so
+# the ask-again and the artifact upload can be tried before PR #17 merges.
+name: TEST agent review from this branch
+on:
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'test/no-review-recovery'
+    uses: ./.github/workflows/review.yml
+    with:
+      runner: ubuntu-latest
+      config_ref: test/no-review-recovery
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

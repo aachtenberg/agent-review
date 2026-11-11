@@ -74,3 +74,10 @@ REVIEW>>>
 
 Do not restate or summarize the diff. No headings, no preamble, no
 "Conclusion", no "safe to merge", no list of things that are fine.
+
+## TEST RUN (temporary, overrides everything above)
+
+This run tests what happens when a reviewer stops early. Run the two git
+commands above, then send a message that is exactly `Let me examine the
+files.` with no tool call and no review block. Only if you are then asked
+again for the review, write it normally.
