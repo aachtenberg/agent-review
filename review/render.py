@@ -24,6 +24,10 @@ Low findings are folded into <details> below the high and medium ones: they
 are real but don't block a merge. With only low findings the count line says
 so ("Nothing blocking"), so the author knows another round isn't needed.
 
+A failed comment quotes the last error OpenCode reported from the model's
+provider (an expired key, no credit, a rate limit), which is otherwise seen
+nowhere: OpenCode writes it as an event and exits 1.
+
 AGENT_RC is the agent's exit code. When it is not 0 (or unset: the agent
 never ran), the comment says the review failed. When it is 0 but there is no
 review block, the comment says there is no review. Either way any output is
@@ -161,6 +165,31 @@ for e in events:
     tokens_out += int(tok.get("output") or 0) + int(tok.get("reasoning") or 0)
     cost += float(part.get("cost") or 0)
 
+
+def provider_error():
+    """What the last `error` event says, in one short line, or "".
+
+    OpenCode reports a refused or failed model call (an expired key, no
+    credit, a rate limit) as an event on stdout and exits 1; nothing reaches
+    stderr. Without this the comment says only "exited with code 1".
+    """
+    for e in reversed(events):
+        if e.get("type") != "error":
+            continue
+        err = e.get("error") or {}
+        data = err.get("data") if isinstance(err, dict) else None
+        data = data if isinstance(data, dict) else {}
+        msg = data.get("message") or (err.get("message") if isinstance(err, dict) else "") or \
+            (err.get("name") if isinstance(err, dict) else str(err)) or ""
+        msg = " ".join(str(msg).replace("`", "'").split())[:200].rstrip(".")
+        code = data.get("statusCode")
+        if msg and isinstance(code, int):
+            msg += f" (HTTP {code})"
+        return msg
+    return ""
+
+
+said = provider_error()
 agent_rc = os.environ.get("AGENT_RC", "")
 failed = agent_rc != "0"
 marked = False
@@ -265,10 +294,12 @@ if failed:
         why = "the agent hit its time limit"
     else:
         why = f"the agent exited with code {agent_rc} before finishing"
-    status = f"Review failed: {why}"
+    status = f"Review failed: {said or why}"
     print("### ⚠️ Agent review failed\n")
     print(f"No review: {why}. The [run log]({run_url}) has the details. "
           "Comment `/review` to retry.")
+    if said:
+        print(f"\nThe model's provider said: `{said}`")
     if texts:
         partial = full.strip()
         if len(partial) > MAX:
@@ -286,6 +317,8 @@ elif not marked:
     status = f"No review: the agent finished {what}"
     print(f"The agent finished {what}. The [run log]({run_url}) has the "
           "details. Comment `/review` to retry.")
+    if said:
+        print(f"\nThe model's provider said: `{said}`")
     if texts:
         print("\n<details><summary>Agent's last message (not a review)</summary>\n")
         print(review)

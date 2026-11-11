@@ -21,11 +21,13 @@ RENDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "review"
 HEAD = "a" * 40
 
 
-def render(*texts, rc="0", check=False):
+def render(*texts, rc="0", check=False, events=()):
     """(exit code, comment) for an agent run that wrote these messages."""
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
         for t in texts:
             f.write(json.dumps({"type": "text", "part": {"text": t}}) + "\n")
+        for e in events:
+            f.write(json.dumps(e) + "\n")
     try:
         env = {"PATH": os.environ.get("PATH", ""), "AGENT_RC": rc, "HEAD_SHA": HEAD,
                "GITHUB_REPOSITORY": "o/r", "MODEL": "test/model"}
@@ -71,6 +73,31 @@ class Marked(Case):
     def test_failed_agent(self):
         rc, out = render("<<<REVIEW\nNo issues found.\nChecked: x.\nREVIEW>>>", rc="124")
         self.assertTrue(out.startswith("### ⚠️ Agent review failed"), out)
+
+
+class ProviderError(Case):
+    # secondlook #7 and #8 on 2026-11-11: "exited 1" and nothing else.
+    EXPIRED = {"type": "error", "error": {"name": "APIError", "data": {
+        "message": "API key expired.", "statusCode": 401, "responseHeaders": {"x": "y"}}}}
+
+    def test_failed_comment_quotes_it(self):
+        rc, out = render(rc="1", events=[self.EXPIRED])
+        self.assertTrue(out.startswith("### ⚠️ Agent review failed"), out)
+        self.assertIn("The model's provider said: `API key expired (HTTP 401)`", out)
+        self.assertNotIn("responseHeaders", out)
+
+    def test_odd_shapes_dont_break_the_comment(self):
+        for err in ("boom", None, {"name": "UnknownError"}, {"data": "text"}, {"data": {"message": "a`b\nc"}}):
+            rc, out = render(rc="1", events=[{"type": "error", "error": err}])
+            self.assertEqual(rc, 0, err)
+            self.assertTrue(out.startswith("### ⚠️ Agent review failed"), out)
+        self.assertIn("provider said: `a'b c`", out)
+
+    def test_a_review_is_posted_whatever_went_wrong_before_it(self):
+        out = self.review("<<<REVIEW\nNo issues found.\nChecked: x.\nREVIEW>>>")
+        rc, out = render("<<<REVIEW\nNo issues found.\nChecked: x.\nREVIEW>>>", events=[self.EXPIRED])
+        self.assertTrue(out.startswith("### 🔎 Agent review"), out)
+        self.assertNotIn("provider said", out)
 
 
 class AWeekOfNoReviews(Case):
