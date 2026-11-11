@@ -20,6 +20,14 @@ name: Agent Review (reusable)
 # (review/previous.py decides; review/scope-rereview.md says how).
 # `/review full` reviews the whole PR again.
 #
+# No review: a model sometimes stops early (it announces its next step and
+# makes no tool call, which ends the run) or writes nothing. The agent is
+# then asked once more, in the same session, to write the review from what
+# it has read. If there is still none and a fallback is set, the fallback
+# reviews. A run that ends without a review keeps the agent's events as an
+# artifact (agent-review-events-<attempt>, 14 days), to tell a model that stopped from
+# a stream that was cut.
+#
 # Status: each run sets an `agent-review` commit status on the PR's head
 # commit: pending while it runs, then success (the review was posted; the
 # description gives the finding counts), failure (no review) or error
@@ -84,6 +92,8 @@ env:
   FALLBACK_MODEL: ${{ inputs.fallback_model }}
   OLLAMA_BASE_URL: ${{ inputs.ollama_base_url }}
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  # Holds OpenCode's session between an attempt and asking it again.
+  SESSION_VOLUME: agent-review-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   agent-review:
@@ -113,8 +123,9 @@ jobs:
       issues: write
       # The agent-review status on the PR's head commit.
       statuses: write
-    # Two attempts of at most 15 minutes each, plus setup.
-    timeout-minutes: 40
+    # Two attempts of at most 15 minutes each, each asked again for at most
+    # 5 minutes if it wrote no review, plus setup.
+    timeout-minutes: 45
     steps:
       - name: Resolve the PR
         id: pr
@@ -240,14 +251,22 @@ jobs:
           if notes:
               t += "\n## Notes for this repository (from .github/agent-review.md)\n\n" + notes + "\n"
           sys.stdout.write(t)' "$cfg" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/earlier.md")"
-          # run_agent MODEL: one attempt; events to events.jsonl, stderr
-          # appended to agent.log. The key goes in only for openrouter/.
+          # OpenCode's sessions, kept between the attempt and the ask-again
+          # below. A named volume, not a directory: the container writes as
+          # root, and the runner couldn't clean that out of its temp dir.
+          # The last step removes it.
+          docker volume create "$SESSION_VOLUME" >/dev/null
+          # run_agent MODEL SECONDS OUT ARGS...: one `opencode run ARGS` of at
+          # most SECONDS; events to OUT, stderr appended to agent.log. The
+          # key goes in only for openrouter/.
           run_agent() {
-            local key_env=()
-            case "$1" in openrouter/*) key_env=(-e OPENROUTER_API_KEY) ;; esac
-            echo "=== $1" >> "$RUNNER_TEMP/agent.log"
+            local model=$1 limit=$2 out=$3 key_env=()
+            shift 3
+            case "$model" in openrouter/*) key_env=(-e OPENROUTER_API_KEY) ;; esac
+            echo "=== $model" >> "$RUNNER_TEMP/agent.log"
             docker run --rm --init --pull=missing --memory=4g --cpus=2 \
               -v "$GITHUB_WORKSPACE/pr:/work:ro" \
+              -v "$SESSION_VOLUME:/root/.local/share/opencode" \
               -v "$cfg/opencode.json:/cfg/opencode.json:ro" \
               -v "$cfg/git-ro:/usr/local/bin/git-ro:ro" \
               -w /work \
@@ -257,33 +276,74 @@ jobs:
               -e OLLAMA_BASE_URL \
               "${key_env[@]}" \
               "$AGENT_IMAGE" \
-              timeout 900 opencode run --model "$1" --format json "$prompt" \
-              > "$RUNNER_TEMP/events.jsonl" 2>> "$RUNNER_TEMP/agent.log"
+              timeout "$limit" opencode run --model "$model" --format json "$@" \
+              > "$out" 2>> "$RUNNER_TEMP/agent.log"
+          }
+          # render.py decides what counts as a review, here as in the comment.
+          has_review() { python3 -I "$cfg/render.py" --check "$RUNNER_TEMP/events.jsonl"; }
+          ask='You stopped without writing the review. Write it now, from what you have already read; make another tool call only if a finding still needs one check. Your whole message is the <<<REVIEW ... REVIEW>>> block in the format given above: either the findings, or "No issues found." with its "Checked:" line.'
+          # attempt MODEL: one review by MODEL, events to events.jsonl. If it
+          # exits cleanly without a review, it is asked once more in the same
+          # session, and those events are added. Returns the first run's
+          # exit code; has_review says whether there is a review.
+          nudged=""
+          attempt() {
+            local arc=0
+            run_agent "$1" 900 "$RUNNER_TEMP/events.jsonl" "$prompt" || arc=$?
+            if [ "$arc" = 0 ] && ! has_review; then
+              echo "::notice::$1 finished without a review; asking it once more"
+              echo "=== asking again" >> "$RUNNER_TEMP/agent.log"
+              nudged=1
+              run_agent "$1" 300 "$RUNNER_TEMP/again.jsonl" --continue "$ask" \
+                || echo "asking again exited $?" >> "$RUNNER_TEMP/agent.log"
+              cat "$RUNNER_TEMP/again.jsonl" >> "$RUNNER_TEMP/events.jsonl"
+              rm -f "$RUNNER_TEMP/again.jsonl"
+            fi
+            return "$arc"
           }
           start=$(date +%s)
           used=$MODEL fell_back="" note="" rc=0
           if [[ $MODEL == openrouter/* && -z ${OPENROUTER_API_KEY:-} ]]; then
             fell_back="no OPENROUTER_API_KEY in this repo" rc=1
           else
-            run_agent "$MODEL" || rc=$?
-            [ "$rc" = 0 ] || fell_back="$MODEL exited $rc"
+            attempt "$MODEL" || rc=$?
+            if [ "$rc" != 0 ]; then
+              fell_back="$MODEL exited $rc"
+            elif ! has_review; then
+              fell_back="$MODEL wrote no review"
+            fi
           fi
           if [ -n "$fell_back" ] && [ -n "${FALLBACK_MODEL:-}" ] && [ "$FALLBACK_MODEL" != "$MODEL" ]; then
             echo "::warning::agent-review falling back to $FALLBACK_MODEL: $fell_back"
             [ ! -s "$RUNNER_TEMP/events.jsonl" ] || mv "$RUNNER_TEMP/events.jsonl" "$RUNNER_TEMP/events-primary.jsonl"
-            used=$FALLBACK_MODEL rc=0
-            run_agent "$FALLBACK_MODEL" || rc=$?
+            used=$FALLBACK_MODEL rc=0 nudged=""
+            attempt "$FALLBACK_MODEL" || rc=$?
           elif [ -n "$fell_back" ]; then
-            # No fallback configured: report why the review did not run.
-            note=$fell_back fell_back=""
+            # No fallback configured: report why the review did not run. A
+            # clean exit without a review needs no note; render.py says so.
+            [ "$rc" = 0 ] || note=$fell_back
+            fell_back=""
           fi
           echo "agent exited $rc" >> "$RUNNER_TEMP/agent.log"
+          # The events and the log may be kept as an artifact (below), which
+          # GitHub does not mask: take the key out, should a tool have echoed it.
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            python3 -I -c 'import os, sys
+          key = os.environ["OPENROUTER_API_KEY"].encode()
+          for p in sys.argv[1:]:
+              if os.path.exists(p):
+                  b = open(p, "rb").read()
+                  if key in b:
+                      open(p, "wb").write(b.replace(key, b"***"))' \
+              "$RUNNER_TEMP/events.jsonl" "$RUNNER_TEMP/events-primary.jsonl" "$RUNNER_TEMP/agent.log"
+          fi
           # The post step reports a failed agent and then fails the job.
           {
             echo "AGENT_RC=$rc"
             echo "AGENT_NOTE=$note"
             echo "MODEL_USED=$used"
             echo "FELL_BACK=$fell_back"
+            echo "NUDGED=$nudged"
             echo "ELAPSED=$(( $(date +%s) - start ))"
           } >> "$GITHUB_ENV"
           tail -30 "$RUNNER_TEMP/agent.log" || true
@@ -315,6 +375,20 @@ jobs:
             echo "::error::the agent finished without a review; a comment saying so was posted"
             exit 1
           fi
+
+      # What the agent did, when the run ended without a review: every
+      # step's finish reason is in the events. Not kept for a posted review.
+      - name: Keep the agent's events from a failed run
+        if: failure() && steps.pr.outputs.number
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-review-events-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/events.jsonl
+            ${{ runner.temp }}/events-primary.jsonl
+            ${{ runner.temp }}/agent.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Finish signal on a /review comment, next to the 👀 added at start:
       # 🚀 when the review was posted, 👎 when the run failed. A run cancelled
@@ -353,3 +427,7 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" -f context=agent-review \
             -f state="$state" -f description="${desc:-Review posted}" -f target_url="$url" >/dev/null \
             || echo "::warning::couldn't set the agent-review status on ${HEAD_SHA:0:7}"
+
+      - name: Remove the session volume
+        if: always()
+        run: docker volume rm -f "$SESSION_VOLUME" >/dev/null 2>&1 || true

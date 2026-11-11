@@ -97,7 +97,7 @@ Keep `opencode-linux-x64-baseline` in `image/package.json`. `ubuntu-itx-01`'s CP
 | A private repo's review stays "Queued" | Its runner is down. Run `./deploy/add-repo.sh <repo> --dry-run`; it says what's wrong and how to fix it. |
 | ⚠️ **Agent review failed** … no `OPENROUTER_API_KEY` | Run `./deploy/add-repo.sh <repo>`. It asks for the key. |
 | ⚠️ **Agent review failed** … time limit | The model was slow or the local GPU was busy. Try again: comment `/review` if you can, or close and reopen the PR. |
-| ⚠️ **No review** | The model didn't finish its answer. Try again the same way. |
+| ⚠️ **No review** | The model stopped before its review, and again when asked for it. Comment `/review` to try again. What it did is in the run's `agent-review-events-1` artifact (the number is the run attempt). |
 | The PR's checks show a cancelled **Agent Review** | A newer review replaced it, usually a `/review` comment. Look at the **agent-review** status under it: that's the latest result. A `/review` run's own check shows on `main`, not on the PR. |
 | A review only looked at the latest commits | That's a re-review, on purpose: it checks the last review's findings and what changed since. Comment `/review full` to review the whole PR. |
 | A script stops with ✗ | Read the line after ✗. It says what to do. |

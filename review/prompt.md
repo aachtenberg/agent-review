@@ -35,8 +35,12 @@ when no test exercises it: report it, don't reason it away.
 ## Output
 
 Think and investigate as much as you need, but the review itself is short.
-Your final message is ONLY the block below, nothing before or after it. The
-reader is the PR author: they want what breaks, where, and the fix.
+A message without a tool call ends the review, so never announce a next step
+("Let me check X") without making the tool call in that same message: until
+you are done, every message calls a tool.
+Your final message is ONLY the block below, nothing before or after it,
+with the `<<<REVIEW` and `REVIEW>>>` lines exactly as shown and written in
+English. The reader is the PR author: they want what breaks, where, and the fix.
 
 If you found problems, a numbered list, most severe first, at most 5. Each
 finding is a summary line and two or three sub-bullets, in this layout:

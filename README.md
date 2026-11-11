@@ -28,7 +28,9 @@ flowchart TD
     C -- yes --> D["Check out the PR, plus the prompt<br/>and config from agent-review"]
     D --> E["The agent runs in a locked-down container.<br/>It reads the diff, then greps for<br/>and reads what uses each change."]
     E <--> M[("Model<br/>OpenRouter or Ollama")]
-    E -- "failed, and a fallback<br/>model is set" --> F["Retry once<br/>with the fallback"]
+    E -- "stopped without a review" --> N["Asked once more,<br/>in the same session"]
+    N --> R
+    E -- "failed or still no review,<br/>and a fallback model is set" --> F["Retry once<br/>with the fallback"]
     F --> R
     E -- finished --> R["render.py builds<br/>the comment"]
     R --> P["Comment on the PR, and set<br/>its agent-review status"]
@@ -67,7 +69,7 @@ It reviews the whole PR instead when the PR was rebased, when a merge came in, w
 |---|---|---|
 | `runner` | `ubuntu-latest` | The runner to use (`runs-on`) |
 | `model` | `openrouter/z-ai/glm-5.3-flash` | Any [OpenCode `provider/model`](https://opencode.ai/docs/models/) |
-| `fallback_model` | none | Tried once if the first model fails or has no key |
+| `fallback_model` | none | Tried once if the first model fails, writes no review, or has no key |
 | `ollama_base_url` | none | Your Ollama endpoint for `ollama/` models, e.g. `http://host:11434/v1` |
 | `config_ref` | `v1` | The version of this repo to read the prompt and config from. Keep it the same as the `@ref` in `uses:` |
 
@@ -80,10 +82,14 @@ Secret: `OPENROUTER_API_KEY`, needed only for `openrouter/` models.
 | Heading | Meaning | Job |
 |---|---|---|
 | **🔎 Agent review** | Up to 5 findings, worst first, each with **Breaks**, **Fix**, and sometimes **Affected**, with low ones folded. Or ✅ `No issues found.` | passes |
-| **⚠️ No review** | The agent finished but didn't write a review. Whatever it did write is folded away. | fails |
+| **⚠️ No review** | The agent finished but didn't write a review, even when asked again. Whatever it did write is folded away. | fails |
 | **⚠️ Agent review failed** | The agent crashed, ran out of time, or couldn't start (for example, no key and no fallback). | fails |
 
 To retry, comment `/review`.
+
+**When the agent stops early.** A model sometimes ends its turn before the review: it says what it will look at next and makes no tool call, or writes nothing. The workflow then asks it once more, in the same session, to write the review from what it has read, and the footer says `asked again for the review`. A finished review that only lacks its markers is posted as it is. A run that still ends without a review keeps the agent's events as an artifact on the run for 14 days (`agent-review-events-1`; the number is the run attempt).
+
+**Reasoning is capped for the default model**, at 8,000 tokens a step, in [`review/opencode.json`](review/opencode.json). OpenCode stops a model's turn at 32,000 output tokens, reasoning included, and GLM sometimes reasoned all the way there and wrote nothing. Another `openrouter/` model can be given the same cap under `provider.openrouter.models`.
 
 The model writes the findings. `render.py` adds the 🔴 high / 🟠 medium / 🟡 low icons, the count line, and links from each `file:line` to the PR's code, so every model's review looks the same. The footer shows the model, the commit, tool calls, tokens, cost, time, whether it was a re-review, and a link to the run.
 
@@ -124,6 +130,8 @@ flowchart TB
 
 The code under review is sent to the model provider: OpenRouter, then whoever serves the model. For private code, choose a provider whose data policy you're OK with, and avoid `:free` models, which may log prompts. Or use a local `ollama/…` model and the code never leaves your network.
 
+A run that ends without a review keeps the agent's events, which include the code it read, as an artifact on that run for 14 days. Whoever can see the repo's Actions runs can download it.
+
 The comment is posted with the job's own `GITHUB_TOKEN`. No third-party GitHub App is involved.
 
 ## Self-hosted runners
@@ -140,7 +148,7 @@ A local fallback model is only there when its GPU is free. If another job holds 
 
 ## Limits
 
-- **Time:** 15 minutes per attempt, 2 attempts with a fallback, 40 minutes for the whole job.
+- **Time:** 15 minutes per attempt, 5 more when an attempt is asked again for its review, 2 attempts with a fallback, 45 minutes for the whole job.
 - **Comment size:** 60,000 characters.
 - **x86-64 runners only:** the image isn't built for ARM.
 
