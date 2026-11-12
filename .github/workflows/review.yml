@@ -21,12 +21,13 @@ name: Agent Review (reusable)
 # `/review full` reviews the whole PR again.
 #
 # No review: a model sometimes stops early (it announces its next step and
-# makes no tool call, which ends the run) or writes nothing. The agent is
-# then asked once more, in the same session, to write the review from what
-# it has read. If there is still none and a fallback is set, the fallback
-# reviews. A run that ends without a review keeps the agent's events as an
-# artifact (agent-review-events-<attempt>, 14 days), to tell a model that stopped from
-# a stream that was cut.
+# makes no tool call, which ends the run) or writes nothing, and on a large
+# PR it can read until its time limit. The agent is then asked once more,
+# in the same session, to write the review from what it has read. If there
+# is still none and a fallback is set, the fallback reviews. Every run
+# keeps the agent's events as an artifact (agent-review-events-<attempt>:
+# 7 days for a posted review, 14 for a run that ended without one), to tell
+# a model that stopped from a stream that was cut.
 #
 # Status: each run sets an `agent-review` commit status on the PR's head
 # commit: pending while it runs, then success (the review was posted; the
@@ -291,7 +292,7 @@ jobs:
           # exits cleanly without a review, or hits its time limit, it is
           # asked once more in the same session, and those events are added.
           # Returns the first run's exit code, or 0 when a run that hit its
-          # limit wrote the review when asked; has_review says whether there
+          # limit had written the review, or wrote it when asked; has_review says whether there
           # is a review. nudged: empty, "stopped" or "late".
           nudged=""
           attempt() {
@@ -300,6 +301,9 @@ jobs:
             if [ "$arc" = 0 ] && ! has_review; then
               why=stopped
               echo "::notice::$1 finished without a review; asking it once more"
+            elif [ "$arc" = 124 ] && has_review; then
+              # Cut off after the review was written: that review stands.
+              arc=0
             elif [ "$arc" = 124 ]; then
               why=late q=$ask_late
               echo "::notice::$1 hit its time limit; asking it for the review from what it has read"

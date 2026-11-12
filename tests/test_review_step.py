@@ -40,6 +40,8 @@ case "$SCENARIO:$model:$again" in
   stuck*:openrouter/*:1) say "Let me keep looking." ;;
   stuck_fallback:ollama/*:0) say "$review" ;;
   late:*:0) say "partial"; exit 124 ;;
+  done_late:*:0) say "$review"; exit 124 ;;
+  done_late:*:1) say "<<<REVIEW\nNo issues found.\nChecked: less.\nREVIEW>>>" ;;
   late:*:1) say "$review" ;;
   timeout:openrouter/*:0) say "partial"; exit 124 ;;
   timeout:openrouter/*:1) say "Still reading."; exit 124 ;;
@@ -151,6 +153,12 @@ class ReviewStep(unittest.TestCase):
         self.assertEqual((out["AGENT_RC"], out["NUDGED"], out["AGENT_NOTE"], out["FELL_BACK"]), ("0", "late", "", ""))
         self.assertTrue(comment.startswith("### 🔎 Agent review"))
         self.assertIn("· hit the time limit, then asked for the review ·", comment)
+
+    def test_out_of_time_after_the_review_is_not_asked_again(self):
+        out, calls, comment = self.run_step("done_late")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((out["AGENT_RC"], out["NUDGED"], out["AGENT_NOTE"]), ("0", "", ""))
+        self.assertIn("Checked: the diff", comment)
 
     def test_out_of_time_twice_goes_to_the_fallback(self):
         out, calls, comment = self.run_step("timeout", FALLBACK)
