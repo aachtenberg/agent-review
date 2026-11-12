@@ -16,7 +16,8 @@ verbatim copy of one of prompt.md's examples (a model quoting its prompt) is
 not a review either, and is skipped. The footer reports
 the model, commit, tool calls, tokens/cost (when the provider reports them)
 and duration (and "asked again for the review" when the agent had stopped
-without one and wrote it only when asked: NUDGED, from review.yml), so reviews from different models can be compared, plus what
+without one and wrote it only when asked, or "hit the time limit, then asked
+for the review": NUDGED, from review.yml), so reviews from different models can be compared, plus what
 the review covered (REVIEW_SCOPE, from previous.py) and a hidden marker with
 the full head SHA, which previous.py reads to build the next re-review on.
 
@@ -276,8 +277,11 @@ model = os.environ.get("MODEL_USED") or os.environ.get("MODEL", "?")
 fell_back = os.environ.get("FELL_BACK", "")
 sha = os.environ.get("HEAD_SHA", "")[:7]
 elapsed = os.environ.get("ELAPSED", "?")
-# The agent stopped without a review and was asked once more (review.yml).
-nudged = " · asked again for the review" if os.environ.get("NUDGED") else ""
+# The agent was asked once more for the review (review.yml): it had stopped
+# without one, or ("late") hit its time limit, so it may not have read all
+# it meant to.
+nudged = {"": "", "late": " · hit the time limit, then asked for the review"}.get(
+    os.environ.get("NUDGED", ""), " · asked again for the review")
 tool_summary = ", ".join(f"{k}×{v}" for k, v in sorted(tool_names.items())) or "none"
 usage = f"{tokens_in:,} in / {tokens_out:,} out tokens"
 if cost:

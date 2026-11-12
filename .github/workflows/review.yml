@@ -256,6 +256,9 @@ jobs:
           # root, and the runner couldn't clean that out of its temp dir.
           # The last step removes it.
           docker volume create "$SESSION_VOLUME" >/dev/null
+          # First line of the log kept with the events: where this ran.
+          scope="full review"; [ -z "$PREV_SHA" ] || scope="re-review since ${PREV_SHA:0:7}"
+          echo "runner ${RUNNER_NAME:-?} (${RUNNER_ENVIRONMENT:-?}, ${RUNNER_OS:-?}/${RUNNER_ARCH:-?}) · run ${GITHUB_RUN_ID:-?}/${GITHUB_RUN_ATTEMPT:-?} · ${GITHUB_REPOSITORY:-?}#$PR_NUMBER ${HEAD_SHA:0:7} · $scope · $AGENT_IMAGE" >> "$RUNNER_TEMP/agent.log"
           # run_agent MODEL SECONDS OUT ARGS...: one `opencode run ARGS` of at
           # most SECONDS; events to OUT, stderr appended to agent.log. The
           # key goes in only for openrouter/.
@@ -263,7 +266,7 @@ jobs:
             local model=$1 limit=$2 out=$3 key_env=()
             shift 3
             case "$model" in openrouter/*) key_env=(-e OPENROUTER_API_KEY) ;; esac
-            echo "=== $model" >> "$RUNNER_TEMP/agent.log"
+            echo "=== $model $(date -u +%H:%M:%SZ) limit ${limit}s" >> "$RUNNER_TEMP/agent.log"
             docker run --rm --init --pull=missing --memory=4g --cpus=2 \
               -v "$GITHUB_WORKSPACE/pr:/work:ro" \
               -v "$SESSION_VOLUME:/root/.local/share/opencode" \
@@ -281,23 +284,34 @@ jobs:
           }
           # render.py decides what counts as a review, here as in the comment.
           has_review() { python3 -I "$cfg/render.py" --check "$RUNNER_TEMP/events.jsonl"; }
-          ask='You stopped without writing the review. Write it now, from what you have already read; make another tool call only if a finding still needs one check. Your whole message is the <<<REVIEW ... REVIEW>>> block in the format given above: either the findings, or "No issues found." with its "Checked:" line.'
+          format='Your whole message is the <<<REVIEW ... REVIEW>>> block in the format given above: either the findings, or "No issues found." with its "Checked:" line.'
+          ask="You stopped without writing the review. Write it now, from what you have already read; make another tool call only if a finding still needs one check. $format"
+          ask_late="You ran out of time before writing the review, and your last step was cut off. Write the review now, from what you have already read, and make no more tool calls: there are only a few minutes left. Report the findings you have confirmed; in a \"Checked:\" line or a finding's text, say what you did not get to. $format"
           # attempt MODEL: one review by MODEL, events to events.jsonl. If it
-          # exits cleanly without a review, it is asked once more in the same
-          # session, and those events are added. Returns the first run's
-          # exit code; has_review says whether there is a review.
+          # exits cleanly without a review, or hits its time limit, it is
+          # asked once more in the same session, and those events are added.
+          # Returns the first run's exit code, or 0 when a run that hit its
+          # limit wrote the review when asked; has_review says whether there
+          # is a review. nudged: empty, "stopped" or "late".
           nudged=""
           attempt() {
-            local arc=0
+            local arc=0 why="" q=$ask
             run_agent "$1" 900 "$RUNNER_TEMP/events.jsonl" "$prompt" || arc=$?
             if [ "$arc" = 0 ] && ! has_review; then
+              why=stopped
               echo "::notice::$1 finished without a review; asking it once more"
-              echo "=== asking again" >> "$RUNNER_TEMP/agent.log"
-              nudged=1
-              run_agent "$1" 300 "$RUNNER_TEMP/again.jsonl" --continue "$ask" \
+            elif [ "$arc" = 124 ]; then
+              why=late q=$ask_late
+              echo "::notice::$1 hit its time limit; asking it for the review from what it has read"
+            fi
+            if [ -n "$why" ]; then
+              echo "=== asking again ($why)" >> "$RUNNER_TEMP/agent.log"
+              nudged=$why
+              run_agent "$1" 300 "$RUNNER_TEMP/again.jsonl" --continue "$q" \
                 || echo "asking again exited $?" >> "$RUNNER_TEMP/agent.log"
               cat "$RUNNER_TEMP/again.jsonl" >> "$RUNNER_TEMP/events.jsonl"
               rm -f "$RUNNER_TEMP/again.jsonl"
+              if [ "$arc" = 124 ] && has_review; then arc=0; fi
             fi
             return "$arc"
           }
@@ -376,10 +390,11 @@ jobs:
             exit 1
           fi
 
-      # What the agent did, when the run ended without a review: every
-      # step's finish reason is in the events. Not kept for a posted review.
-      - name: Keep the agent's events from a failed run
-        if: failure() && steps.pr.outputs.number
+      # What the agent did: every tool call and each step's finish reason
+      # and token counts are in the events, and agent.log says where it ran.
+      # Kept 7 days for a posted review, 14 for a run that ended without one.
+      - name: Keep the agent's events
+        if: (success() || failure()) && steps.pr.outputs.number
         uses: actions/upload-artifact@v4
         with:
           name: agent-review-events-${{ github.run_attempt }}
@@ -388,7 +403,7 @@ jobs:
             ${{ runner.temp }}/events-primary.jsonl
             ${{ runner.temp }}/agent.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: ${{ job.status == 'success' && 7 || 14 }}
 
       # Finish signal on a /review comment, next to the 👀 added at start:
       # 🚀 when the review was posted, 👎 when the run failed. A run cancelled

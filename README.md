@@ -28,7 +28,7 @@ flowchart TD
     C -- yes --> D["Check out the PR, plus the prompt<br/>and config from agent-review"]
     D --> E["The agent runs in a locked-down container.<br/>It reads the diff, then greps for<br/>and reads what uses each change."]
     E <--> M[("Model<br/>OpenRouter or Ollama")]
-    E -- "stopped without a review" --> N["Asked once more,<br/>in the same session"]
+    E -- "stopped without a review,<br/>or out of time" --> N["Asked once more,<br/>in the same session"]
     N --> R
     E -- "failed or still no review,<br/>and a fallback model is set" --> F["Retry once<br/>with the fallback"]
     F --> R
@@ -83,11 +83,15 @@ Secret: `OPENROUTER_API_KEY`, needed only for `openrouter/` models.
 |---|---|---|
 | **🔎 Agent review** | Up to 5 findings, worst first, each with **Breaks**, **Fix**, and sometimes **Affected**, with low ones folded. Or ✅ `No issues found.` | passes |
 | **⚠️ No review** | The agent finished but didn't write a review, even when asked again. Whatever it did write is folded away. | fails |
-| **⚠️ Agent review failed** | The agent crashed, ran out of time, or couldn't start (for example, no key and no fallback). | fails |
+| **⚠️ Agent review failed** | The agent crashed, ran out of time and wrote no review when asked for one, or couldn't start (for example, no key and no fallback). | fails |
 
 To retry, comment `/review`.
 
-**When the agent stops early.** A model sometimes ends its turn before the review: it says what it will look at next and makes no tool call, or writes nothing. The workflow then asks it once more, in the same session, to write the review from what it has read, and the footer says `asked again for the review`. A finished review that only lacks its markers is posted as it is. A run that still ends without a review keeps the agent's events as an artifact on the run for 14 days (`agent-review-events-1`; the number is the run attempt).
+**When the agent stops early.** A model sometimes ends its turn before the review: it says what it will look at next and makes no tool call, or writes nothing. The workflow then asks it once more, in the same session, to write the review from what it has read, and the footer says `asked again for the review`. A finished review that only lacks its markers is posted as it is.
+
+**When the agent runs out of time.** On a large PR a model can read for the whole 15 minutes and never write. The workflow then asks it, in the same session, for the review from what it has read so far, with no more tool calls. The footer says `hit the time limit, then asked for the review`: such a review may cover less than the model meant to, and it is told to say what it did not get to.
+
+**Every run keeps the agent's events** as an artifact on the run (`agent-review-events-1`; the number is the run attempt): each tool call, each step's finish reason and token counts, and a log that starts with the runner the review ran on. 7 days for a posted review, 14 for a run that ended without one.
 
 **Reasoning is capped for the default model**, at 8,000 tokens a step, in [`review/opencode.json`](review/opencode.json). OpenCode stops a model's turn at 32,000 output tokens, reasoning included, and GLM sometimes reasoned all the way there and wrote nothing. Another `openrouter/` model can be given the same cap under `provider.openrouter.models`.
 
@@ -130,7 +134,7 @@ flowchart TB
 
 The code under review is sent to the model provider: OpenRouter, then whoever serves the model. For private code, choose a provider whose data policy you're OK with, and avoid `:free` models, which may log prompts. Or use a local `ollama/…` model and the code never leaves your network.
 
-A run that ends without a review keeps the agent's events, which include the code it read, as an artifact on that run for 14 days. Whoever can see the repo's Actions runs can download it.
+Every run keeps the agent's events, which include the code it read, as an artifact on that run: 7 days for a posted review, 14 for a run that ended without one. Whoever can see the repo's Actions runs can download it.
 
 The comment is posted with the job's own `GITHUB_TOKEN`. No third-party GitHub App is involved.
 
@@ -148,7 +152,7 @@ A local fallback model is only there when its GPU is free. If another job holds 
 
 ## Limits
 
-- **Time:** 15 minutes per attempt, 5 more when an attempt is asked again for its review, 2 attempts with a fallback, 45 minutes for the whole job.
+- **Time:** 15 minutes per attempt, 5 more when an attempt stopped early or ran out of time and is asked for its review, 2 attempts with a fallback, 45 minutes for the whole job.
 - **Comment size:** 60,000 characters.
 - **x86-64 runners only:** the image isn't built for ARM.
 

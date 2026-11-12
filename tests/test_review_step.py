@@ -5,7 +5,8 @@ Run:  python3 -m unittest discover -s tests
 
 The step's shell is taken out of the workflow file and run as it is. The
 stand-in `docker` writes canned agent events, chosen by scenario, model and
-whether the call is the ask-again (`opencode run --continue`). Checked: which
+whether the call is the ask-again (`opencode run --continue`), after a stop
+or after the time limit. Checked: which
 runs happen, what the step tells the post step ($GITHUB_ENV), and what
 render.py then makes of the events.
 """
@@ -38,7 +39,10 @@ case "$SCENARIO:$model:$again" in
   stuck*:openrouter/*:0) say "Let me examine llm.py." ;;
   stuck*:openrouter/*:1) say "Let me keep looking." ;;
   stuck_fallback:ollama/*:0) say "$review" ;;
+  late:*:0) say "partial"; exit 124 ;;
+  late:*:1) say "$review" ;;
   timeout:openrouter/*:0) say "partial"; exit 124 ;;
+  timeout:openrouter/*:1) say "Still reading."; exit 124 ;;
   timeout:ollama/*:0) say "The change looks solid." ;;
   timeout:ollama/*:1) say "$review" ;;
 esac
@@ -91,7 +95,7 @@ class ReviewStep(unittest.TestCase):
             "GITHUB_ENV": os.path.join(tmp, "env"), "AGENT_IMAGE": "image",
             "MODEL": MAIN, "FALLBACK_MODEL": fallback, "OLLAMA_BASE_URL": "",
             "OPENROUTER_API_KEY": KEY, "BASE_SHA": self.sha, "HEAD_SHA": self.sha,
-            "BASE_REF": "main", "PR_NUMBER": "1", "PREV_SHA": "", "SESSION_VOLUME": "vol",
+            "BASE_REF": "main", "PR_NUMBER": "1", "GITHUB_REPOSITORY": "o/r", "PREV_SHA": "", "SESSION_VOLUME": "vol",
         }
         p = subprocess.run(["bash", "-e", "-c", review_step()], cwd=os.path.join(d, "ws"),
                            env=env, capture_output=True, text=True)
@@ -120,7 +124,7 @@ class ReviewStep(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertNotIn("--continue", calls[0])
         self.assertIn("timeout 300 opencode run --model " + MAIN + " --format json --continue", calls[1])
-        self.assertEqual((out["AGENT_RC"], out["NUDGED"], out["MODEL_USED"]), ("0", "1", MAIN))
+        self.assertEqual((out["AGENT_RC"], out["NUDGED"], out["MODEL_USED"]), ("0", "stopped", MAIN))
         self.assertTrue(comment.startswith("### 🔎 Agent review"))
         self.assertIn("· asked again for the review ·", comment)
 
@@ -139,19 +143,34 @@ class ReviewStep(unittest.TestCase):
         self.assertTrue(comment.startswith("### 🔎 Agent review"))
         self.assertIn("(fallback: " + MAIN + " wrote no review)", comment)
 
-    def test_timeout_is_not_asked_again_and_the_fallback_is(self):
+    def test_out_of_time_then_writes_it_when_asked(self):
+        # secondlook #8 on 2026-11-12: 50 steps of reading, no review, 124.
+        out, calls, comment = self.run_step("late")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("timeout 300 opencode run --model " + MAIN + " --format json --continue You ran out of time", calls[1])
+        self.assertEqual((out["AGENT_RC"], out["NUDGED"], out["AGENT_NOTE"], out["FELL_BACK"]), ("0", "late", "", ""))
+        self.assertTrue(comment.startswith("### 🔎 Agent review"))
+        self.assertIn("· hit the time limit, then asked for the review ·", comment)
+
+    def test_out_of_time_twice_goes_to_the_fallback(self):
         out, calls, comment = self.run_step("timeout", FALLBACK)
         self.assertEqual([("--continue" in c, FALLBACK in c) for c in calls],
-                         [(False, False), (False, True), (True, True)])
-        self.assertEqual((out["AGENT_RC"], out["FELL_BACK"], out["NUDGED"]), ("0", MAIN + " exited 124", "1"))
+                         [(False, False), (True, False), (False, True), (True, True)])
+        self.assertEqual((out["AGENT_RC"], out["FELL_BACK"], out["NUDGED"]),
+                         ("0", MAIN + " exited 124", "stopped"))
         self.assertTrue(comment.startswith("### 🔎 Agent review"))
+        self.assertIn("· asked again for the review ·", comment)
 
-    def test_timeout_without_a_fallback_fails(self):
+    def test_out_of_time_twice_without_a_fallback_fails(self):
         out, calls, comment = self.run_step("timeout")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual((out["AGENT_RC"], out["AGENT_NOTE"]), ("124", MAIN + " exited 124"))
         self.assertTrue(comment.startswith("### ⚠️ Agent review failed"))
 
+    def test_the_log_says_where_it_ran(self):
+        self.run_step("ok")
+        first = read(os.path.join(self.dir, "tmp", "agent.log")).splitlines()[0]
+        self.assertIn("o/r#1 " + self.sha[:7] + " · full review · image", first)
 
 if __name__ == "__main__":
     unittest.main()
