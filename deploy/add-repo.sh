@@ -90,8 +90,14 @@ if gh secret list -R "$R" --json name --jq '.[].name' | grep -x OPENROUTER_API_K
 elif [ "$dry" = 1 ]; then
   todo "would ask you to paste the OpenRouter API key"
 else
-  echo "    Paste the OpenRouter API key and press Enter (ask the owner if you don't have it):"
-  gh secret set OPENROUTER_API_KEY -R "$R"
+  # gh secret set reads stdin when it isn't a terminal, so without one it
+  # would quietly store an empty key. Ask here instead, and refuse empty.
+  [ -t 0 ] || die "This step needs you to paste the key, and nothing can be typed here.
+  Run the script in a terminal window."
+  read -rsp "    Paste the OpenRouter API key and press Enter (ask the owner if you don't have it): " key
+  echo
+  [ -n "$key" ] || die "No key pasted, so nothing was set. Run it again and paste the key."
+  printf %s "$key" | gh secret set OPENROUTER_API_KEY -R "$R"
   ok "set"
 fi
 
